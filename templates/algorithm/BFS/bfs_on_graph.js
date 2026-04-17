@@ -1,18 +1,20 @@
 const START_NODE_INDEX = 0;
 
 function traverseGraph(adjacencyList) {
-  const queue = [];
+  let queue = [START_NODE_INDEX];
   const seen = new Set([START_NODE_INDEX]);
   let result = 0;
 
   while (queue.length) {
-    const currentLength = queue.length;
     const nextQueue = [];
 
-    for (let i = 0; i < currentLength; i++) {
-      const nodeIndex = queue[i];
+    for (const nodeIndex of queue) {
       // DO SOME LOGIC AT THIS POINT
-      for (const neighbor of adjacencyList[nodeIndex]) {
+      // e.g., result += nodeValue;
+
+      const neighbors = adjacencyList[nodeIndex];
+
+      for (const neighbor of neighbors) {
         if (!seen.has(neighbor)) {
           seen.add(neighbor);
           nextQueue.push(neighbor);

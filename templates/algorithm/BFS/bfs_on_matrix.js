@@ -5,24 +5,35 @@ const DIRECTIONS = [
   [0, -1],
 ];
 
-function traverseMatrix(startNode) {
-  const queue = [startNode];
-  const seen = new Set([startNode]);
+function traverseMatrix(matrix, startNode) {
+  const rows = matrix.length;
+  const cols = matrix[0].length;
+
+  let queue = [startNode];
+  const seen = new Set([stringifyNode(startNode)]);
   while (queue.length) {
-    const currentLength = queue.length;
+    const nextLevel = [];
 
-    for (let i = 0; i < currentLength; i++) {
-      const node = queue[i];
-      const newQueue = [];
+    for (const node of queue) {
+      // DO SOME LOGIC FOR CURRENT NODE AT THIS POINT
 
-      for (const neighbor of getNeighbors(node)) {
-        if (!seen.has(neighbor)) {
+      const { row, col } = node;
+
+      for (const [dr, dc] of DIRECTIONS) {
+        const nr = row + dr;
+        const nc = col + dc;
+        const nextNode = { row: nr, col: nc };
+        const key = stringifyNode(nextNode);
+
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !seen.has(key)) {
           // DO LOGIC AT THIS POINT
-          seen.add(neighbor);
-          newQueue.push(neighbor);
+          seen.add(key);
+          nextLevel.push(nextNode);
         }
       }
     }
+
+    queue = nextLevel;
   }
 }
 
@@ -34,4 +45,9 @@ function getNeighbors(node) {
     result.push({ row: row + deltaRow, col: col + deltaCol });
   }
   return result;
+}
+
+function stringifyNode(node) {
+  const { row, col } = node;
+  return [row, col].join(",");
 }

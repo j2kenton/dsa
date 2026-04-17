@@ -1,15 +1,13 @@
 function traverseTree(root) {
-  const queue = [root];
+  let queue = [root];
   let result = 0;
 
   while (queue.length) {
-    const currentLength = queue.length;
     // DO LOGIC FOR CURRENT LEVEL
 
     const nextQueue = [];
 
-    for (let i = 0; i < currentLength; i++) {
-      const node = queue[i];
+    for (const node of queue) {
       // DO LOGIC FOR CURRENT NODE
       // e.g.
       // if (node === target){
