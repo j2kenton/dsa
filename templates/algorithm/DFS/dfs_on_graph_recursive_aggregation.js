@@ -10,6 +10,7 @@ function traverseGraph(startNode) {
         result += dfs(neighbor);
       }
     }
+    return result;
   }
 
   seen.add(startNode);

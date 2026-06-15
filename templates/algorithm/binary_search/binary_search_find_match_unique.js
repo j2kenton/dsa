@@ -3,7 +3,7 @@ function findMatchOrInsertionPt(nums, target) {
   let right = nums.length - 1;
 
   while (left <= right) {
-    const mid = Math.floor((right - left) / 2);
+    const mid = left + Math.floor((right - left) / 2);
     if (nums[mid] === target) {
       return mid;
     } else if (nums[mid] > target) {

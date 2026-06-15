@@ -69,8 +69,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const code = TEMPLATES[key];
   if (!code || !tab?.id) return;
 
+  const frameIds = typeof info.frameId === "number" ? [info.frameId] : [0];
   chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+    target: { tabId: tab.id, frameIds },
     func: (text) => {
       window.__dsaInsertText = text;
       window.dispatchEvent(new CustomEvent("dsa-insert"));
