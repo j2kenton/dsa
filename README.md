@@ -2,6 +2,12 @@
 
 Algorithm and data structure templates, plus a Chrome extension that inserts them via right-click.
 
+## [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/dsa-templates/ollnhakcihdpbakabcdgagaciipklehd)
+
+---
+
+![DSA Templates screenshot](store-assets/screenshot-1.png)
+
 ## Chrome Extension
 
 ### Setup
