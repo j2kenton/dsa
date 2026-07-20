@@ -1,4 +1,5 @@
 node_modules/
+.env.local
 .claude/settings.local.json
 extension/templates.js
 extension/coaching-knowledge.js

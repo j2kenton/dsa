@@ -6,10 +6,15 @@
     "build": "node generate-icons.js && node build.js",
     "test": "vitest run",
     "test:chrome": "npm run package && node tests/chrome/smoke.mjs",
-    "package": "npm run build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs",
+    "webstore:upload": "npm run package && node scripts/run-webstore-cli.js upload",
+    "webstore:publish": "node scripts/run-webstore-cli.js publish",
+    "release": "node scripts/publish-live.js",
+    "check-types": "echo \"No types to check for JS project\""
   },
   "devDependencies": {
     "archiver": "^7.0.1",
+    "chrome-webstore-upload-cli": "^4.0.1",
     "jsdom": "^24.1.0",
     "puppeteer": "^24.0.0",
     "vitest": "^2.1.8"
