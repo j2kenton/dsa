@@ -24,8 +24,27 @@ describe("OpenAI provider adapter", () => {
   });
 
   it.each([[401, "rejected"], [429, "rate limiting"], [500, "500"]])("maps provider status %s to a safe message", async (status, message) => {
-    const { providerChat } = providerWith(vi.fn().mockResolvedValue({ ok: false, status }));
+    const { providerChat } = providerWith(vi.fn().mockResolvedValue({ ok: false, status, json: async () => ({}) }));
     await expect(providerChat("openai", [], { apiKey: "sk-secret" })).rejects.toThrow(message);
+  });
+
+  it("includes the provider's own message for unmapped statuses", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: { message: "'messages' must contain the word 'json'." } }) });
+    const { providerChat } = providerWith(fetch);
+    await expect(providerChat("openai", [], { apiKey: "sk-secret" })).rejects.toThrow("must contain the word 'json'");
+  });
+
+  it("sends a test prompt that satisfies the json_object response format", async () => {
+    // response_format json_object makes the API reject any request whose
+    // messages omit the word "json", so a test prompt without it fails with a
+    // 400 for every key, valid or not.
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ok":true}' } }] }) });
+    const { PROVIDERS } = providerWith(fetch);
+    await PROVIDERS.openai.test("sk-secret");
+    const [, request] = fetch.mock.calls[0];
+    const sent = JSON.parse(request.body);
+    expect(sent.response_format).toEqual({ type: "json_object" });
+    expect(JSON.stringify(sent.messages).toLowerCase()).toContain("json");
   });
 
   it("reports unavailable providers before making a request", async () => {

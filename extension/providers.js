@@ -9,7 +9,16 @@ const PROVIDERS = {
         body: JSON.stringify({ model: options.model || "gpt-4o-mini", messages, temperature: 0.35, response_format: { type: "json_object" } }),
       });
       if (!response.ok) {
-        const error = new Error(response.status === 401 ? "The API key was rejected." : response.status === 429 ? "The provider is rate limiting requests." : `Provider request failed (${response.status}).`);
+        // Surface the provider's own message for statuses we do not map. A bare
+        // status code cannot distinguish a malformed request from a quota
+        // problem, which makes a 400 undebuggable from the options page. The
+        // error body describes the request, never the key.
+        let detail = "";
+        if (response.status !== 401 && response.status !== 429) {
+          const body = await response.json().catch(() => null);
+          detail = body?.error?.message ? ` ${body.error.message}` : "";
+        }
+        const error = new Error(response.status === 401 ? "The API key was rejected." : response.status === 429 ? "The provider is rate limiting requests." : `Provider request failed (${response.status}).${detail}`);
         error.status = response.status;
         throw error;
       }
@@ -17,7 +26,10 @@ const PROVIDERS = {
       return body.choices?.[0]?.message?.content || "";
     },
     async test(apiKey) {
-      await this.chat([{ role: "user", content: "Reply with {\"ok\":true}." }], { apiKey });
+      // chat() sets response_format json_object, which the API rejects with a
+      // 400 unless the word "json" appears in the messages. Keep it in this
+      // prompt verbatim.
+      await this.chat([{ role: "user", content: "Reply with the json object {\"ok\":true}." }], { apiKey });
     },
   },
 };
