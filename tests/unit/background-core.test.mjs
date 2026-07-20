@@ -37,7 +37,7 @@ function createStorage(seed, failures = {}, delays = {}) {
   return { state, local: area("local"), session: area("session") };
 }
 
-async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, delays = {}, tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" }], selection = "", templates = {}, knowledge = [], waitForReady = true } = {}) {
+async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, delays = {}, tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" }], selection = "", templates = {}, knowledge = [], waitForReady = true, editorCodeResponse = undefined } = {}) {
   const storage = createStorage(seed, failures, delays);
   const actionCalls = [];
   const scriptingCalls = [];
@@ -54,13 +54,25 @@ async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, de
     tabs: {
       onRemoved: event(), onUpdated: event(), onActivated: event(),
       async query(query) { return tabs.filter((tab) => (!query?.windowId || tab.windowId === query.windowId) && (!query?.active || tab.active !== false)); },
-      async sendMessage(...args) { tabMessages.push(args); throw new Error("No content script in this unit harness"); },
+      async sendMessage(tabId, message) {
+        tabMessages.push([tabId, message]);
+        if (message?.type === "editor:read" && editorCodeResponse !== undefined) {
+          const tab = tabs.find((candidate) => candidate.id === tabId);
+          chrome.runtime.onMessage.listeners[0](
+            { type: "editor:result", requestId: message.requestId, code: editorCodeResponse },
+            { id: "test-extension", tab: { id: tabId }, frameId: 0, url: tab?.url || "" },
+            () => {},
+          );
+          return { ok: true };
+        }
+        throw new Error("No content script in this unit harness");
+      },
     },
     windows: { onFocusChanged: event(), async get(id) { if (!tabs.some((tab) => tab.windowId === id)) throw new Error("missing window"); return { id }; } },
     scripting: { async executeScript(...args) { scriptingCalls.push(args); return [{ result: { selected: selection, sourceUrl: tabs[0]?.url || "" } }]; } },
   };
   const context = vm.createContext({ chrome, crypto: webcrypto, TextEncoder, URL, setTimeout, clearTimeout, console, importScripts() {}, TEMPLATES: templates, COACHING_KNOWLEDGE: knowledge });
-  vm.runInContext(`${backgroundSource}\nglobalThis.__core = { credentialReady, sessionReady, resolveCredential, nextGeneration, setCredential, setCredentialMode, deleteCredential, deleteRollbackMessage, activeCredential, credentialState, clipCapture, capHistory, historyBytes, promptFor, validateReply, validatedFieldsOnly, commitSession, readSessions, touch, publicSession, pushSession, launchCoach, captureFor, findSessionForTab, templateOutcome, sessionForPort, handlePanelMessage, beginProviderRequest, rehydrateSessions, waitForSessionCommits, STAGE_FIELDS, MAX_CAPTURE, MAX_HISTORY_BYTES, CREDENTIAL_KEY, SESSION_KEY };`, context, { filename: "background.js" });
+  vm.runInContext(`${backgroundSource}\nglobalThis.__core = { credentialReady, sessionReady, resolveCredential, nextGeneration, setCredential, setCredentialMode, deleteCredential, deleteRollbackMessage, activeCredential, credentialState, clipCapture, capHistory, historyBytes, promptFor, validateReply, validatedFieldsOnly, commitSession, readSessions, touch, publicSession, pushSession, launchCoach, captureFor, findSessionForTab, templateOutcome, sessionForPort, handlePanelMessage, beginProviderRequest, rehydrateSessions, waitForSessionCommits, STAGES, STAGE_FIELDS, clampStage, stageFor, stageFieldsFor, hasCaptureText, readEditorCode, MAX_CAPTURE, MAX_EDITOR_CODE, MAX_HISTORY_BYTES, CREDENTIAL_KEY, SESSION_KEY };`, context, { filename: "background.js" });
   if (waitForReady) {
     await context.__core.credentialReady;
     await context.__core.sessionReady;
@@ -76,6 +88,11 @@ async function runtimeMessage(chrome, message, sender) {
   if (!keptAlive) return { keptAlive, responded, response };
   for (let index = 0; index < 20 && !responded; index++) await new Promise((resolve) => setTimeout(resolve, 0));
   return { keptAlive, responded, response };
+}
+
+async function flushWork(core) {
+  for (let index = 0; index < 10; index++) await new Promise((resolve) => setTimeout(resolve, 0));
+  await core.waitForSessionCommits();
 }
 
 function panelPort(sender) {
@@ -196,16 +213,28 @@ describe("background worker core", () => {
     expect(core.validatedFieldsOnly(JSON.stringify({ discussion: "Reason about the invariant.", hint: "for (let i = 0; i < n; i++)" }), 0)).toEqual({ matchedPatternId: "", discussion: "Reason about the invariant." });
   });
 
-  it("clips captures in field priority order and caps UTF-8 history bytes", async () => {
+  it("clips captures in field priority order (title, description, examples, constraints) and caps UTF-8 history bytes", async () => {
     const { core } = await loadWorker();
     const clipped = core.clipCapture({ title: "T".repeat(20), constraints: "C".repeat(9000), examples: "E", description: "D" });
     expect(clipped.title).toHaveLength(20);
-    expect(clipped.constraints).toHaveLength(core.MAX_CAPTURE - 20);
-    expect(clipped.examples).toBe("");
+    expect(clipped.description).toBe("D");
+    expect(clipped.examples).toBe("E");
+    expect(clipped.constraints).toHaveLength(core.MAX_CAPTURE - 22);
+    expect(clipped.truncated).toBe(true);
     const session = { history: [{ text: "😀".repeat(40000) }] };
     core.capHistory(session);
     expect(core.historyBytes(session.history)).toBeLessThanOrEqual(core.MAX_HISTORY_BYTES);
     expect(session.historyNotice).toContain("dropped");
+  });
+
+  it("prioritizes description over examples/constraints in the capture budget, so a long problem keeps its statement", async () => {
+    const { core } = await loadWorker();
+    const longDescription = "D".repeat(9000);
+    const clipped = core.clipCapture({ title: "Title", description: longDescription, examples: "E".repeat(500), constraints: "C".repeat(500) });
+    expect(clipped.description.length).toBeGreaterThan(7900);
+    expect(clipped.examples).toBe("");
+    expect(clipped.constraints).toBe("");
+    expect(clipped.truncated).toBe(true);
   });
 
   it("serializes concurrent commits for different sessions without losing either", async () => {
@@ -364,11 +393,42 @@ describe("background worker core", () => {
     expect(messages).toHaveLength(0);
   });
 
+  it("refreshes session.url on a verified same-origin navigation of the tracked tab, so canReadEditor reflects where it navigated", async () => {
+    const tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/", active: true }];
+    const { core, chrome } = await loadWorker({ tabs });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    expect(core.publicSession((await core.readSessions()).s1).canReadEditor).toBe(true);
+    chrome.tabs.onUpdated.trigger(1, { status: "complete", url: "https://leetcode.com/discuss/general" }, { id: 1, url: "https://leetcode.com/discuss/general" });
+    await core.waitForSessionCommits();
+    const stored = (await core.readSessions()).s1;
+    expect(stored.url).toBe("https://leetcode.com/discuss/general");
+    expect(core.publicSession(stored).canReadEditor).toBe(false);
+  });
+
+  it("does not adopt the mismatchAck substitute tab's URL, since capture/editor reads still target the original session.tabId", async () => {
+    const tabs = [
+      { id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/", active: false },
+      { id: 2, windowId: 1, url: "https://leetcode.com/problems/two-sum/", active: true },
+    ];
+    const { core, chrome } = await loadWorker({ tabs });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", mismatchAck: { tabId: 2, origin: "https://leetcode.com" }, capture: { title: "Two Sum" }, confirmed: true, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    chrome.tabs.onUpdated.trigger(2, { status: "complete", url: "https://leetcode.com/discuss/general" }, { id: 2, url: "https://leetcode.com/discuss/general" });
+    await core.waitForSessionCommits();
+    const stored = (await core.readSessions()).s1;
+    expect(stored.url).toBe("https://leetcode.com/problems/two-sum/");
+  });
+
   it("returns mapped and explicit unmapped template outcomes only at the final stage", async () => {
     const { core } = await loadWorker({ templates: { "Stack: Monotonic": "code" }, knowledge: [{ id: "monotonic-stack", templateKey: "Stack: Monotonic" }, { id: "quickselect" }] });
-    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 6)).toBeNull();
-    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 7)).toMatchObject({ key: "Stack: Monotonic" });
-    expect(core.templateOutcome({ matchedPatternId: "quickselect" }, 7).label).toContain("No built-in template");
+    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 5)).toBeNull();
+    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 6)).toMatchObject({ key: "Stack: Monotonic" });
+    expect(core.templateOutcome({ matchedPatternId: "quickselect" }, 6).label).toContain("No built-in template");
   });
 
   it("rejects credential messages from non-options contexts before they can mutate storage", async () => {
@@ -529,5 +589,220 @@ describe("background worker core", () => {
     unknownWindow.onMessage.trigger({ type: "coach:handshake", windowId: 99 });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(unknownWindow.disconnected).toBe(true);
+  });
+
+  it("clamps a legacy out-of-range stageIndex during rehydration, and promptFor/validateReply tolerate an unclamped index", async () => {
+    const seed = { local: {}, session: { "dsaCoach.sessions": { s1: { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, revision: 1, updatedAt: 1 } } } };
+    const { core } = await loadWorker({ seed });
+    const rehydrated = (await core.readSessions()).s1;
+    expect(rehydrated.stageIndex).toBe(core.STAGES.length - 1);
+
+    const messages = core.promptFor({ stageIndex: 7, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "hi");
+    expect(messages[0].content).toContain(core.STAGES.at(-1).objective);
+    expect(() => core.validateReply(JSON.stringify({ code: "const x = 1;" }), 7)).not.toThrow();
+  });
+
+  it("injects the current stage's objective into the system prompt", async () => {
+    const { core } = await loadWorker();
+    const messages = core.promptFor({ stageIndex: 2, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "hi");
+    expect(messages[0].content).toContain(core.STAGES[2].objective);
+  });
+
+  it("sends the current stage's allowed fields to the panel, so it can gate stage-specific controls", async () => {
+    const { core } = await loadWorker();
+    const session = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, stageIndex: 2 };
+    expect(core.publicSession(session).stage.fields).toEqual(core.STAGES[2].fields);
+  });
+
+  it("encourages a learner-proposed brute force and prefers modern JS phrasing over 'hash map or object'", async () => {
+    const { core } = await loadWorker();
+    const system = core.promptFor({ stageIndex: 2, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "hi")[0].content;
+    expect(system).toContain("affirm it as the correct place to start");
+    expect(system).not.toContain("a hash map or object");
+    expect(system).toMatch(/Map, Set, or Object\.groupBy/);
+  });
+
+  it("attaches editor code as one ephemeral message ahead of the final learner message", async () => {
+    const messages = (await loadWorker()).core.promptFor({ stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}");
+    const codeMessage = messages.find((message) => message.content.includes("function twoSum"));
+    expect(codeMessage).toBeDefined();
+    expect(messages.at(-1).content).toBe("Learner message: what do you think?");
+  });
+
+  it("does not replay a code-stage assistant turn's code field once back at an earlier stage", async () => {
+    const { core } = await loadWorker();
+    const session = { stageIndex: 0, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [
+      { role: "coach", code: "function twoSum() { return []; }", discussion: "Here is a full solution." },
+    ] };
+    const messages = core.promptFor(session, "What next?");
+    expect(messages.map((message) => message.content).join("\n")).not.toContain("function twoSum");
+  });
+
+  it("coach:go-back clamps at 0 and re-locks stage-gated fields", async () => {
+    const { core } = await loadWorker();
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    const port = { postMessage() {}, disconnect() {} };
+    const context = { windowId: 1, currentSessionId: "s1" };
+    for (let index = 0; index < 8; index++) await core.handlePanelMessage(port, context, { type: "coach:go-back", sessionId: "s1" });
+    const stored = (await core.readSessions()).s1;
+    expect(stored.stageIndex).toBe(0);
+    expect(() => core.validateReply(JSON.stringify({ code: "const x = 1;" }), stored.stageIndex)).toThrow("too early");
+  });
+
+  it("hasCaptureText treats any non-empty field as a capture, so an examples-only result is kept", async () => {
+    const { core } = await loadWorker();
+    expect(core.hasCaptureText({ title: "", description: "", examples: "Example 1: ...", constraints: "" })).toBe(true);
+    expect(core.hasCaptureText({ title: "", description: "", examples: "", constraints: "" })).toBe(false);
+    expect(core.hasCaptureText(null)).toBe(false);
+  });
+
+  it("readEditorCode refuses to read on a non-LeetCode session even when asked to", async () => {
+    const { core } = await loadWorker({ tabs: [{ id: 1, windowId: 1, url: "https://example.test/other" }], editorCodeResponse: "leaked code" });
+    const code = await core.readEditorCode({ tabId: 1, url: "https://example.test/other", origin: "https://example.test" });
+    expect(code).toBe("");
+  });
+
+  it("coach:send without includeCode never reads the editor", async () => {
+    const { core, context, tabMessages } = await loadWorker({ editorCodeResponse: "should not be read" });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 0, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    context.providerChat = () => Promise.resolve('{"discussion":"Sure, tell me more."}');
+    await core.beginProviderRequest("s1", "hello", false, false);
+    await flushWork(core);
+    expect(tabMessages.some(([, message]) => message.type === "editor:read")).toBe(false);
+    const stored = (await core.readSessions()).s1;
+    expect(stored.history[0]).toMatchObject({ codeAttached: false });
+  });
+
+  it("coach:send with includeCode reads and attaches editor code (truncated), and never persists the raw code", async () => {
+    const longCode = Array.from({ length: 500 }, (_, index) => `// line ${index}`).join("\n");
+    const { core, context, tabMessages } = await loadWorker({ editorCodeResponse: longCode });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    let capturedPrompt;
+    context.providerChat = (provider, messages) => { capturedPrompt = messages; return Promise.resolve('{"discussion":"Looks reasonable so far."}'); };
+    await core.beginProviderRequest("s1", "What do you think of my code?", false, true);
+    await flushWork(core);
+    expect(tabMessages.some(([, message]) => message.type === "editor:read")).toBe(true);
+    expect(capturedPrompt.some((message) => message.content.includes("// line 0"))).toBe(true);
+    expect(capturedPrompt.some((message) => message.content.includes("// line 499"))).toBe(false);
+    const stored = (await core.readSessions()).s1;
+    expect(stored.history[0]).toMatchObject({ role: "user", text: "What do you think of my code?", codeAttached: true });
+    expect(JSON.stringify(stored)).not.toContain("// line 0");
+  });
+
+  it("a failed editor read is non-fatal: the request still completes with no code attached", async () => {
+    const { core, context } = await loadWorker(); // editorCodeResponse left undefined -> the content-script round trip fails
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    context.providerChat = () => Promise.resolve('{"discussion":"Let\'s look at it together."}');
+    await core.beginProviderRequest("s1", "What do you think?", false, true);
+    await flushWork(core);
+    const stored = (await core.readSessions()).s1;
+    expect(stored.error).toBe("");
+    expect(stored.history[0]).toMatchObject({ codeAttached: false });
+  });
+
+  it("coach:retry reuses the original includeCode choice from session.lastIncludeCode", async () => {
+    const marker = "// retry-marker-42";
+    const { core, context } = await loadWorker({ editorCodeResponse: marker });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, lastUserMessage: "check my code", lastIncludeCode: true, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    let lastPrompt;
+    context.providerChat = (provider, messages) => { lastPrompt = messages; return Promise.resolve('{"discussion":"Noted."}'); };
+    const port = { postMessage() {}, disconnect() {} };
+    const panelContext = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(port, panelContext, { type: "coach:retry", sessionId: "s1" });
+    await flushWork(core);
+    expect(JSON.stringify(lastPrompt)).toContain("retry-marker-42");
+  });
+
+  it("warns the model that attached editor code may only be the visible portion of a long file", async () => {
+    const { core } = await loadWorker();
+    const messages = core.promptFor({ stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}", true);
+    const codeMessage = messages.find((message) => message.content.includes("function twoSum"));
+    expect(codeMessage.content).toContain("may include only the lines currently scrolled into view, not the whole file");
+  });
+
+  it("distinguishes 'never asked to attach code' from 'asked but nothing could be read' in the system prompt", async () => {
+    const { core } = await loadWorker();
+    const base = { stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] };
+    const notRequested = core.promptFor(base, "what do you think?")[0].content;
+    expect(notRequested).toContain('ask them to tick "Attach my editor code" and resend');
+
+    const requestedButEmpty = core.promptFor(base, "what do you think?", "", "", true)[0].content;
+    expect(requestedButEmpty).toContain("nothing could be read from it");
+    expect(requestedButEmpty).not.toContain('ask them to tick "Attach my editor code" and resend');
+
+    const requestedWithCode = core.promptFor(base, "what do you think?", "", "function twoSum() {}", true)[0].content;
+    expect(requestedWithCode).not.toContain('ask them to tick "Attach my editor code" and resend');
+    expect(requestedWithCode).not.toContain("nothing could be read from it");
+  });
+
+  it("does not replay a previously attached editor code into a later turn where includeCode is now false", async () => {
+    const { core, context, tabMessages } = await loadWorker({ editorCodeResponse: "function twoSum() { return secretMarker; }" });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    context.providerChat = () => Promise.resolve('{"discussion":"Looks reasonable."}');
+    await core.beginProviderRequest("s1", "look at my code", false, true);
+    await flushWork(core);
+
+    let secondPrompt;
+    context.providerChat = (provider, messages) => { secondPrompt = messages; return Promise.resolve('{"discussion":"Sure, go on."}'); };
+    await core.beginProviderRequest("s1", "what about now, no code this time", false, false);
+    await flushWork(core);
+
+    expect(secondPrompt.map((message) => message.content).join("\n")).not.toContain("secretMarker");
+    expect(tabMessages.filter(([, message]) => message.type === "editor:read")).toHaveLength(1);
+  });
+
+  it("carries attached editor code into the contract-violation retry prompt inside safeCoachReply", async () => {
+    const { core, context } = await loadWorker({ editorCodeResponse: "function twoSum() {}" });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    const prompts = [];
+    let call = 0;
+    context.providerChat = (provider, messages) => {
+      prompts.push(messages);
+      call++;
+      return Promise.resolve(call === 1 ? "not valid json" : '{"discussion":"ok"}');
+    };
+    await core.beginProviderRequest("s1", "what do you think of my code?", false, true);
+    await flushWork(core);
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) {
+      expect(prompt.some((message) => message.content.includes("function twoSum"))).toBe(true);
+    }
+  });
+
+  it("clipCapture reserves budget for description before examples and constraints, so a long problem statement survives", async () => {
+    const { core } = await loadWorker();
+    const longDescription = "d".repeat(core.MAX_CAPTURE - 100);
+    const clipped = core.clipCapture({ title: "T", description: longDescription, examples: "e".repeat(500), constraints: "c".repeat(500) });
+    expect(clipped.description).toBe(longDescription);
+    expect(clipped.examples.length).toBeLessThan(500);
+    expect(clipped.constraints).toBe("");
+    expect(clipped.truncated).toBe(true);
   });
 });

@@ -38,5 +38,43 @@ describe("content script", () => {
     expect(outbound).toHaveLength(1);
     expect(outbound[0]).toMatchObject({ type: "capture:result", requestId: "capture-1", capture: { title: "Daily Temperatures" } });
     expect(outbound[0].capture.constraints).toContain("Constraints");
+    // Stripping both the examples and constraints sections out of this fixture
+    // leaves nothing behind, so the empty-description guard falls back to the
+    // original full text instead of sending a blank description.
+    expect(outbound[0].capture.description).toBe("Example 1: warmer day\nConstraints\n1 <= n <= 100");
+  });
+
+  it("strips constraints and examples out of description once each, instead of duplicating them", () => {
+    const { dom, listeners, outbound } = page('<div data-track-load="description_content"></div>');
+    const content = dom.window.document.querySelector("[data-track-load]");
+    Object.defineProperty(content, "innerText", {
+      value: "Given an array, return the widget count.\n\nExample 1:\nInput: [1,2]\nOutput: 2\n\nConstraints:\n1 <= n <= 100",
+    });
+    listeners[0]({ type: "capture:leetcode", requestId: "capture-2" }, {}, () => {});
+    const { capture } = outbound[0];
+    expect(capture.description).toBe("Given an array, return the widget count.");
+    expect(capture.examples).toContain("Input: [1,2]");
+    expect(capture.constraints).toContain("1 <= n <= 100");
+    expect(capture.description).not.toContain("Constraints");
+    expect(capture.description).not.toContain("Input: [1,2]");
+  });
+
+  it("reads the learner's Monaco editor contents ordered by each line's absolute top offset", () => {
+    const { dom, listeners, outbound } = page(
+      '<div class="monaco-editor"><div class="view-lines">' +
+        '<div class="view-line" style="top:36px">line two</div>' +
+        '<div class="view-line" style="top:0px">line one</div>' +
+        '<div class="view-line" style="top:18px">line one and a half</div>' +
+        "</div></div>",
+    );
+    listeners[0]({ type: "editor:read", requestId: "editor-1" }, {}, () => {});
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0]).toEqual({ type: "editor:result", requestId: "editor-1", code: "line one\nline one and a half\nline two" });
+  });
+
+  it("returns an empty editor read when no Monaco editor is present on the page", () => {
+    const { dom, listeners, outbound } = page("<p>no editor here</p>");
+    listeners[0]({ type: "editor:read", requestId: "editor-2" }, {}, () => {});
+    expect(outbound).toEqual([{ type: "editor:result", requestId: "editor-2", code: "" }]);
   });
 });

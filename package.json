@@ -11,7 +11,8 @@
     "webstore:publish": "node scripts/run-webstore-cli.js publish",
     "release": "node scripts/publish-live.js",
     "ensemble:release": "npm run release",
-    "check-types": "echo \"No types to check for JS project\""
+    "check-types": "echo \"No types to check for JS project\"",
+    "lint": "echo \"No linting required\""
   },
   "devDependencies": {
     "archiver": "^7.0.1",

@@ -4,6 +4,9 @@ let current = null;
 let windowId = null;
 let retryTimer = null;
 let reconnectDelay = 250;
+let resetArmed = false;
+let resetTimer = null;
+let lastRenderedSessionId = null;
 
 function escapeHtml(value) { return String(value || "").replace(/[&<>\"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 function send(type, extra = {}) { if (port) port.postMessage({ type, sessionId: current?.id, ...extra }); }
@@ -12,24 +15,53 @@ function armRetryTimer() {
   clearRetryTimer();
   if (current?.pendingRequest) retryTimer = setTimeout(() => { $("#error").textContent = "This request may have been interrupted. Tap Retry to continue."; $("#retry").hidden = false; }, 60000);
 }
+function disarmReset() {
+  resetArmed = false;
+  if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+  $("#reset").textContent = "Reset session";
+  $("#reset").classList.remove("danger");
+}
 function render() {
   $("#error").textContent = current?.error || "";
   $("#empty").hidden = Boolean(current);
   $("#session").hidden = !current;
+  // A reset armed on one session should never carry over to a different session
+  // (e.g. after switching tabs), so any identity change disarms it.
+  if ((current?.id || null) !== lastRenderedSessionId) { disarmReset(); lastRenderedSessionId = current?.id || null; }
   if (!current) return;
   const capture = current.capture;
-  $("#capture").innerHTML = capture ? `<div class="card"><strong>${escapeHtml(capture.title || "Captured problem")}</strong><pre>${escapeHtml([capture.constraints, capture.examples, capture.description].filter(Boolean).join("\n\n"))}</pre>${capture.truncated ? "<p class=\"warning\">Capture was trimmed to 8,000 characters.</p>" : ""}</div>` : `<p>${current.captureStatus === "capturing" ? "Capturing problem text…" : current.captureStatus === "empty" ? "No problem text was found. Select text on the page and start a new coaching session." : "Capture unavailable."}</p>`;
+  const captureLimit = (current.maxCaptureChars || 8000).toLocaleString();
+  $("#capture").innerHTML = capture ? `<div class="card"><strong>${escapeHtml(capture.title || "Captured problem")}</strong>${["description", "examples", "constraints"].filter((field) => capture[field]).map((field) => `<pre>${escapeHtml(capture[field])}</pre>`).join("")}${capture.truncated ? `<p class="warning">Capture was trimmed to ${captureLimit} characters.</p>` : ""}</div>` : `<p>${current.captureStatus === "capturing" ? "Capturing problem text…" : current.captureStatus === "empty" ? "No problem text was found. Select text on the page and start a new coaching session." : "Capture unavailable."}</p>`;
   $("#confirmation").hidden = !capture || current.confirmed;
   $("#controls").hidden = !current.confirmed || Boolean(current.mismatch);
   $("#mismatch").hidden = !current.mismatch;
   $("#mismatch-text").textContent = current.mismatch?.message || "This conversation belongs to another page. Continue only if you want to reuse its original problem text.";
-  $("#advance").textContent = current.stageIndex >= 7 ? "Full code unlocked" : `Reveal next stage (${["Clarify", "Patterns", "Approach", "Edge cases", "Outline", "Hint", "Pseudocode", "Code"][current.stageIndex + 1] || ""})`;
-  $("#advance").disabled = current.stageIndex >= 7;
+
+  const stage = current.stage || { index: 0, label: "" };
+  const stages = current.stages || [];
+  $("#stage-info").textContent = stages.length ? `Stage ${stage.index + 1} of ${stages.length} — ${stage.label}. ${stage.objective || ""}` : "";
+  $("#back").disabled = !stage.index;
+  const nextStage = stages[stage.index + 1];
+  $("#advance").textContent = nextStage ? `Reveal next stage (${nextStage.label})` : "Full code unlocked";
+  $("#advance").disabled = !nextStage;
+  $("#message").placeholder = stage.placeholder || "";
+
+  const stageFields = stage.fields || [];
+  const stageHasCode = stageFields.includes("pseudocode") || stageFields.includes("code");
+  const canAttachCode = current.canReadEditor && stageHasCode;
+  $("#include-code").disabled = !canAttachCode;
+  $("#include-code-reason").textContent = !current.canReadEditor
+    ? "Only available on a LeetCode problem page."
+    : !stageHasCode
+    ? "Available once you reach the pseudocode or code stage."
+    : "Best-effort read of the visible editor — for a long file, scroll to the part you're asking about first.";
+  if (!canAttachCode) $("#include-code").checked = false;
+
   $("#send").disabled = Boolean(current.pendingRequest);
   $("#retry").hidden = !current.error?.includes("interrupted") && !current.pendingRequest;
   $("#history-note").textContent = current.historyNotice || "";
   $("#conversation").innerHTML = (current.history || []).map((item) => item.role === "user"
-    ? `<article class="user"><strong>You</strong><p>${escapeHtml(item.text)}</p></article>`
+    ? `<article class="user"><strong>You</strong><p>${escapeHtml(item.text)}</p>${item.codeAttached ? `<p class="subtle">Editor code attached</p>` : ""}</article>`
     : `<article class="coach"><strong>Coach</strong>${[item.question, item.discussion, item.hint, item.pseudocode, item.code].filter(Boolean).map((text) => `<p>${escapeHtml(text)}</p>`).join("")}${item.templateOutcome ? `<p class="template-outcome">${item.templateOutcome.key ? `<button class="template-link" data-template="${escapeHtml(item.templateOutcome.key)}">${escapeHtml(item.templateOutcome.label)}</button>` : escapeHtml(item.templateOutcome.label)}</p>` : ""}</article>`).join("");
   document.querySelectorAll(".template-link").forEach((button) => { button.onclick = () => send("coach:get-template", { templateKey: button.dataset.template }); });
   armRetryTimer();
@@ -59,12 +91,33 @@ function connect() {
 }
 
 async function start() { windowId = (await chrome.windows.getCurrent()).id; connect(); }
+function submitMessage() {
+  const text = $("#message").value.trim();
+  if (!text) return;
+  $("#message").value = "";
+  const includeCode = $("#include-code").checked;
+  send("coach:send", { text, includeCode });
+}
 $("#confirm").onclick = () => send("coach:confirm-capture", { captureId: current?.captureId });
+$("#back").onclick = () => send("coach:go-back");
 $("#advance").onclick = () => send("coach:advance");
-$("#send").onclick = () => { const text = $("#message").value.trim(); if (text) { $("#message").value = ""; send("coach:send", { text }); } };
+$("#send").onclick = submitMessage;
+$("#message").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); }
+});
 $("#retry").onclick = () => send("coach:retry");
 $("#continue").onclick = () => send("coach:continue-anyway");
-$("#reset").onclick = () => send("coach:reset");
+$("#reset").onclick = () => {
+  if (!resetArmed) {
+    resetArmed = true;
+    $("#reset").textContent = "Confirm reset?";
+    $("#reset").classList.add("danger");
+    resetTimer = setTimeout(disarmReset, 5000);
+    return;
+  }
+  disarmReset();
+  send("coach:reset");
+};
 $("#settings").onclick = () => chrome.runtime.openOptionsPage();
 $("#template-form").onsubmit = (event) => { event.preventDefault(); const code = $("#template-key").value; if (code) navigator.clipboard.writeText(code).then(() => { $("#template-status").textContent = "Template copied to the clipboard."; }); };
 start();
