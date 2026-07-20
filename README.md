@@ -1,4 +1,4 @@
-# Art of the Extension
+# Algo Coach
 
 Algorithm templates plus a progressive, bring-your-own-key DSA problem-solving coach.
 

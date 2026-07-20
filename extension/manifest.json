@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Art of the Extension",
+  "name": "Algo Coach",
   "version": "2.0.0",
   "description": "DSA templates and a progressive AI problem-solving coach",
   "icons": {

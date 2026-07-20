@@ -1,4 +1,4 @@
-# Privacy Policy — Art of the Extension
+# Privacy Policy — Algo Coach
 
 This extension does not collect personal data for the developer.
 
