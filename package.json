@@ -10,6 +10,7 @@
     "webstore:upload": "npm run package && node scripts/run-webstore-cli.js upload",
     "webstore:publish": "node scripts/run-webstore-cli.js publish",
     "release": "node scripts/publish-live.js",
+    "ensemble:release": "npm run release",
     "check-types": "echo \"No types to check for JS project\""
   },
   "devDependencies": {
