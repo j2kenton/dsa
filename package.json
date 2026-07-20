@@ -1,8 +1,17 @@
 {
   "name": "dsa",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
-    "build": "node generate-icons.js && node build.js"
+    "build": "node generate-icons.js && node build.js",
+    "test": "vitest run",
+    "test:chrome": "npm run package && node tests/chrome/smoke.mjs",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.1",
+    "jsdom": "^24.1.0",
+    "puppeteer": "^24.0.0",
+    "vitest": "^2.1.8"
   }
 }

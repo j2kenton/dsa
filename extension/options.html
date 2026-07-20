@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DSA Coach settings</title><link rel="stylesheet" href="coach.css"></head>
+<body class="settings">
+  <main><h1>DSA Coach settings</h1><p class="subtle">Your API key is used only from this extension to call your selected provider.</p>
+  <label>Provider<select id="provider"><option value="openai">OpenAI</option></select></label>
+  <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Paste a spend-capped API key"></label>
+  <label class="check"><input id="persistent" type="checkbox"> Remember key after Chrome restarts (stored locally on this device)</label>
+  <p id="persistent-note" class="warning" hidden>Persistent storage is unavailable until Chrome confirms trusted extension-only storage. You can still save a session-only key.</p>
+  <p class="warning">Use a key with a usage limit. Session-only storage is the default. The extension never includes your key in coaching prompts or displays it after saving.</p>
+  <div class="row"><button id="save">Save</button><button id="save-test">Save &amp; test</button><button id="mode" class="secondary">Apply storage choice</button><button id="test" class="secondary">Test saved key</button><button id="delete" class="danger">Delete key</button></div>
+  <p id="status" role="status"></p></main><script src="options.js"></script>
+</body></html>

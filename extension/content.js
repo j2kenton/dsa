@@ -1,46 +1,47 @@
-window.addEventListener("dsa-insert", () => {
-  const text = window.__dsaInsertText;
-  if (!text) return;
+(() => {
+  if (globalThis.__dsaContentScriptLoaded) return;
+  globalThis.__dsaContentScriptLoaded = true;
 
-  const el = document.activeElement;
-  if (!el) return;
-
-  // Standard textarea / input
-  if (
-    el.tagName === "TEXTAREA" ||
-    (el.tagName === "INPUT" && el.type !== "checkbox" && el.type !== "radio")
-  ) {
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? el.value.length;
-    el.value = el.value.slice(0, start) + text + el.value.slice(end);
-    el.selectionStart = el.selectionEnd = start + text.length;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    return;
+  function insertTemplate(text) {
+    const el = document.activeElement;
+    if (!el) throw new Error("Focus an editor before inserting a template.");
+    if (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["checkbox", "radio"].includes(el.type))) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      el.selectionStart = el.selectionEnd = start + text.length;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    if (el.isContentEditable || el.closest("[contenteditable='true']")) {
+      document.execCommand("insertText", false, text);
+      return;
+    }
+    navigator.clipboard.writeText(text);
   }
 
-  // contenteditable (e.g. LeetCode's Monaco-based editor or CodeMirror)
-  if (el.isContentEditable || el.closest("[contenteditable='true']")) {
-    document.execCommand("insertText", false, text);
-    return;
+  function text(selector) {
+    return document.querySelector(selector)?.innerText?.trim() || "";
   }
 
-  // Fallback: copy to clipboard and notify
-  navigator.clipboard.writeText(text).then(() => {
-    const toast = document.createElement("div");
-    Object.assign(toast.style, {
-      position: "fixed",
-      bottom: "24px",
-      right: "24px",
-      background: "#1e1e2e",
-      color: "#cdd6f4",
-      padding: "10px 16px",
-      borderRadius: "8px",
-      fontSize: "14px",
-      zIndex: "999999",
-      boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-    });
-    toast.textContent = "Template copied to clipboard";
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 2500);
+  function extractLeetCode() {
+    const title = text('[data-cy="question-title"]') || text("div.text-title-large");
+    const content = document.querySelector('[data-track-load="description_content"]') || document.querySelector(".elfjS");
+    const description = content?.innerText?.trim() || "";
+    const constraints = (description.match(/Constraints[\s\S]*?(?=Follow-up|$)/i) || [""])[0];
+    const examples = (description.match(/Example[\s\S]*?(?=Constraints|Follow-up|$)/i) || [""])[0];
+    return { title, constraints, examples, description, sourceUrl: location.href };
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "dsa-insert") {
+      try { insertTemplate(message.text); sendResponse({ ok: true }); }
+      catch (error) { sendResponse({ ok: false, error: error.message }); }
+      return;
+    }
+    if (message?.type === "capture:leetcode") {
+      chrome.runtime.sendMessage({ type: "capture:result", requestId: message.requestId, capture: extractLeetCode() });
+      sendResponse({ ok: true });
+    }
   });
-});
+})();

@@ -1,0 +1,87 @@
+[
+  {
+    "id": "monotonic-stack",
+    "name": "Monotonic stack",
+    "purpose": "Find a next greater, next smaller, or nearest value efficiently.",
+    "keywords": ["next greater", "nearest smaller", "warmer", "largest rectangle"],
+    "mechanism": "Scan once and keep unresolved indices in monotonic order. Pop an index only when the current value resolves it; storing indices preserves both the value and its distance.",
+    "complexity": "O(n): every index is pushed once and popped at most once.",
+    "pitfalls": ["Store indices, not just values, when distance matters.", "Use a while-loop for multiple newly resolved items."],
+    "templateKey": "Stack"
+  },
+  {
+    "id": "monotonic-deque",
+    "name": "Monotonic deque",
+    "purpose": "Maintain the maximum or minimum of a sliding window in linear time.",
+    "keywords": ["sliding window maximum", "window minimum"],
+    "mechanism": "Remove expired indices from the front and dominated candidates from the back before adding the current index.",
+    "complexity": "O(n)",
+    "pitfalls": ["Evict by index before reading the window answer.", "Keep indices so expiry is unambiguous."]
+  },
+  {
+    "id": "backtracking",
+    "name": "Backtracking",
+    "purpose": "Explore combinations, permutations, and constrained choices.",
+    "keywords": ["all permutations", "all combinations", "generate", "subsets"],
+    "mechanism": "Choose, recurse, then undo exactly that choice before trying the next branch.",
+    "complexity": "Usually exponential; state the output-sensitive cost.",
+    "pitfalls": ["Always pop to restore the path.", "Store results with [...path], because arrays are references."],
+    "templateKey": "Backtracking: Basic"
+  },
+  {
+    "id": "two-heaps",
+    "name": "Two heaps",
+    "purpose": "Maintain a running median or split a stream around a boundary.",
+    "keywords": ["median stream", "running median", "continuous median"],
+    "mechanism": "Keep the lower half in a max-heap and upper half in a min-heap. Insert, transfer the boundary, then rebalance so the max-heap has the same number or one more.",
+    "complexity": "O(log n) insertion and O(1) median.",
+    "pitfalls": ["Rebalance after every insertion.", "Average both heap tops for an even count."]
+  },
+  {
+    "id": "quickselect",
+    "name": "Quickselect",
+    "purpose": "Find a kth element without fully sorting.",
+    "keywords": ["kth largest", "kth smallest", "top k element"],
+    "mechanism": "Partition around a pivot and continue only in the partition containing the target index.",
+    "complexity": "Expected O(n) with randomized pivots; O(n²) remains possible in the worst case.",
+    "pitfalls": ["Convert kth-largest to the correct zero-based target index.", "Randomize the pivot to avoid predictable bad input." ]
+  },
+  {
+    "id": "binary-search-answer",
+    "name": "Binary search on answer",
+    "purpose": "Find a minimum or maximum feasible threshold.",
+    "keywords": ["minimum capacity", "maximize minimum", "can we", "within days"],
+    "mechanism": "Binary-search the range of possible answers and use a greedy feasibility check for each candidate.",
+    "complexity": "Often O(n log S), where S is the answer range.",
+    "pitfalls": ["Set bounds from the problem, such as max item through total sum.", "For a minimum feasible value, a feasible mid searches lower."],
+    "templateKey": "Binary Search: Insertion Point (Unique)"
+  },
+  {
+    "id": "two-pointers",
+    "name": "Two pointers",
+    "purpose": "Search sorted arrays or shrink and expand an array range.",
+    "keywords": ["sorted array", "pair sum", "3sum", "opposite ends"],
+    "mechanism": "Move the left or right pointer according to whether the current value is below or above the target.",
+    "complexity": "Usually O(n) after any required sort.",
+    "pitfalls": ["Skip adjacent duplicates for unique 3-sum results.", "Account for the O(n log n) sorting cost."],
+    "templateKey": "Two Pointers: Opposite Ends"
+  },
+  {
+    "id": "negative-marking",
+    "name": "Negative marking",
+    "purpose": "Find duplicates or missing values in a [1,n] array with constant extra space.",
+    "keywords": ["numbers 1 to n", "duplicate", "missing number", "constant space"],
+    "mechanism": "Use abs(value)-1 as an index and negate the value there. A value already negative indicates a repeat.",
+    "complexity": "O(n) time and O(1) auxiliary space.",
+    "pitfalls": ["Use Math.abs before calculating the index.", "Mention that the input is mutated." ]
+  },
+  {
+    "id": "merge-intervals",
+    "name": "Merge intervals",
+    "purpose": "Combine overlapping time ranges.",
+    "keywords": ["intervals", "overlap", "meeting rooms", "merge ranges"],
+    "mechanism": "Sort by start, compare each interval to the latest merged interval, and extend its end when current.start <= last.end.",
+    "complexity": "O(n log n) due to sorting.",
+    "pitfalls": ["Use max of the two end values so a containing interval is preserved.", "Do not compare only with the previous unmerged interval." ]
+  }
+]

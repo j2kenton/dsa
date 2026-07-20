@@ -1,5 +1,9 @@
-# Privacy Policy — DSA Templates
+# Privacy Policy — Art of the Extension
 
-This extension does not collect, transmit, or store any personal data.
+This extension does not collect personal data for the developer.
 
-It operates entirely locally: when you select a template from the right-click menu, the template text is inserted directly into the active text field in your browser. No data leaves your device.
+Template insertion operates locally: selected template text is inserted directly into the active text field.
+
+If you opt into AI coaching, the extension sends only the problem text shown in its preview after you explicitly confirm it, plus your coaching messages, directly to the AI provider you configure (OpenAI in v1). This data is used to obtain that provider's response and is not sent to an extension-owned backend.
+
+API keys are stored session-only by default. You may opt into persistent local storage on your device; when supported, Chrome restricts that storage to trusted extension contexts. Keys are not placed in prompts, UI state, or content-script messages. You can delete a saved key from Extension settings at any time.

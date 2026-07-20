@@ -1,22 +1,31 @@
 {
   "manifest_version": 3,
-  "name": "DSA Templates",
-  "version": "1.0.0",
-  "description": "Right-click to insert DSA algorithm templates",
+  "name": "Art of the Extension",
+  "version": "1.1.0",
+  "description": "DSA templates and a progressive AI problem-solving coach",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["contextMenus", "scripting", "activeTab"],
+  "minimum_chrome_version": "116",
+  "permissions": ["contextMenus", "scripting", "activeTab", "storage", "sidePanel"],
+  "host_permissions": ["https://api.openai.com/*"],
   "background": {
     "service_worker": "background.js"
   },
+  "action": {
+    "default_title": "Open DSA coach"
+  },
+  "options_page": "options.html",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["https://leetcode.com/problems/*"],
       "js": ["content.js"],
-      "all_frames": true
+      "all_frames": false
     }
   ]
 }

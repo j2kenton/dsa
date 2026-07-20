@@ -1,4 +1,14 @@
 node_modules/
 .claude/settings.local.json
 extension/templates.js
+extension/coaching-knowledge.js
 extension/icons/
+dist/
+
+# BEGIN Ensemble managed meta resources
+# Managed by Ensemble. Do not edit this block manually.
+/artifacts/helper/
+/.ensemble/
+/.ensemble/**/chat-v1.json
+/.ensemble/**/chat-v1.corrupt.json
+# END Ensemble managed meta resources
