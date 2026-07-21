@@ -426,9 +426,9 @@ describe("background worker core", () => {
 
   it("returns mapped and explicit unmapped template outcomes only at the final stage", async () => {
     const { core } = await loadWorker({ templates: { "Stack: Monotonic": "code" }, knowledge: [{ id: "monotonic-stack", templateKey: "Stack: Monotonic" }, { id: "quickselect" }] });
-    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 5)).toBeNull();
-    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 6)).toMatchObject({ key: "Stack: Monotonic" });
-    expect(core.templateOutcome({ matchedPatternId: "quickselect" }, 6).label).toContain("No built-in template");
+    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 6)).toBeNull();
+    expect(core.templateOutcome({ matchedPatternId: "monotonic-stack" }, 7)).toMatchObject({ key: "Stack: Monotonic" });
+    expect(core.templateOutcome({ matchedPatternId: "quickselect" }, 7).label).toContain("No built-in template");
   });
 
   it("rejects credential messages from non-options contexts before they can mutate storage", async () => {
@@ -622,11 +622,11 @@ describe("background worker core", () => {
     expect(system).toMatch(/Map, Set, or Object\.groupBy/);
   });
 
-  it("attaches editor code as one ephemeral message ahead of the final learner message", async () => {
-    const messages = (await loadWorker()).core.promptFor({ stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}");
+  it("attaches editor code as one ephemeral message ahead of the final user message", async () => {
+    const messages = (await loadWorker()).core.promptFor({ stageIndex: 7, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}");
     const codeMessage = messages.find((message) => message.content.includes("function twoSum"));
     expect(codeMessage).toBeDefined();
-    expect(messages.at(-1).content).toBe("Learner message: what do you think?");
+    expect(messages.at(-1).content).toBe("User message: what do you think?");
   });
 
   it("does not replay a code-stage assistant turn's code field once back at an earlier stage", async () => {
@@ -641,7 +641,7 @@ describe("background worker core", () => {
   it("coach:go-back clamps at 0 and re-locks stage-gated fields", async () => {
     const { core } = await loadWorker();
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     const port = { postMessage() {}, disconnect() {} };
@@ -685,7 +685,7 @@ describe("background worker core", () => {
     const { core, context, tabMessages } = await loadWorker({ editorCodeResponse: longCode });
     await core.setCredential({ apiKey: "session-key", persistent: false });
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     let capturedPrompt;
@@ -704,7 +704,7 @@ describe("background worker core", () => {
     const { core, context } = await loadWorker(); // editorCodeResponse left undefined -> the content-script round trip fails
     await core.setCredential({ apiKey: "session-key", persistent: false });
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     context.providerChat = () => Promise.resolve('{"discussion":"Let\'s look at it together."}');
@@ -720,7 +720,7 @@ describe("background worker core", () => {
     const { core, context } = await loadWorker({ editorCodeResponse: marker });
     await core.setCredential({ apiKey: "session-key", persistent: false });
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, lastUserMessage: "check my code", lastIncludeCode: true, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, pendingRequest: null, lastUserMessage: "check my code", lastIncludeCode: true, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     let lastPrompt;
@@ -734,14 +734,14 @@ describe("background worker core", () => {
 
   it("warns the model that attached editor code may only be the visible portion of a long file", async () => {
     const { core } = await loadWorker();
-    const messages = core.promptFor({ stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}", true);
+    const messages = core.promptFor({ stageIndex: 7, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] }, "what do you think?", "", "function twoSum() {}", true);
     const codeMessage = messages.find((message) => message.content.includes("function twoSum"));
     expect(codeMessage.content).toContain("may include only the lines currently scrolled into view, not the whole file");
   });
 
   it("distinguishes 'never asked to attach code' from 'asked but nothing could be read' in the system prompt", async () => {
     const { core } = await loadWorker();
-    const base = { stageIndex: 6, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] };
+    const base = { stageIndex: 7, createdAt: Date.now(), capture: { title: "Two Sum" }, history: [] };
     const notRequested = core.promptFor(base, "what do you think?")[0].content;
     expect(notRequested).toContain('ask them to tick "Attach my editor code" and resend');
 
@@ -758,7 +758,7 @@ describe("background worker core", () => {
     const { core, context, tabMessages } = await loadWorker({ editorCodeResponse: "function twoSum() { return secretMarker; }" });
     await core.setCredential({ apiKey: "session-key", persistent: false });
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     context.providerChat = () => Promise.resolve('{"discussion":"Looks reasonable."}');
@@ -778,7 +778,7 @@ describe("background worker core", () => {
     const { core, context } = await loadWorker({ editorCodeResponse: "function twoSum() {}" });
     await core.setCredential({ apiKey: "session-key", persistent: false });
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 6, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 7, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
       return sessions.s1;
     });
     const prompts = [];

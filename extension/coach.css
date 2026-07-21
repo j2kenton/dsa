@@ -1,1 +1,49 @@
-:root { color-scheme: dark; font: 14px/1.45 system-ui, sans-serif; background: #10131a; color: #eef2ff; } body { margin: 0; } main { max-width: 680px; margin: auto; padding: 20px; } .panel { padding: 14px; } header, .row { display: flex; align-items: center; gap: 8px; } header h1 { margin-right: auto; font-size: 18px; } h1 { margin-top: 0; } label { display: grid; gap: 6px; margin: 14px 0; } input, select, textarea, button { font: inherit; border-radius: 7px; border: 1px solid #374151; padding: 8px 10px; background: #171c28; color: inherit; } textarea { min-height: 180px; resize: vertical; } #message { min-height: 0; height: 4.5em; } button { background: #4f46e5; border: 0; cursor: pointer; } button.secondary { background: #283142; } button.danger { background: #a52323; } button:disabled { opacity: .55; cursor: default; } .check { display: flex; align-items: center; } .card, article { background: #171c28; border: 1px solid #293246; border-radius: 9px; margin: 12px 0; padding: 11px; } pre { white-space: pre-wrap; font: inherit; max-height: 260px; overflow: auto; } article.user { border-left: 3px solid #60a5fa; } article.coach { border-left: 3px solid #34d399; } .subtle { color: #b9c2d8; } .warning { color: #fbbf24; } .error { color: #fca5a5; } .success { color: #6ee7b7; } #controls[hidden], [hidden] { display: none; }
+:root { color-scheme: dark; font: 14px/1.45 system-ui, sans-serif; background: #10131a; color: #eef2ff; }
+body { margin: 0; }
+main { max-width: 680px; margin: auto; padding: 20px; }
+.panel { padding: 14px; }
+header, .row { display: flex; align-items: center; gap: 8px; }
+header h1 { margin-right: auto; font-size: 18px; }
+h1 { margin-top: 0; }
+label { display: grid; gap: 6px; margin: 14px 0; }
+input, select, textarea, button { font: inherit; border-radius: 7px; border: 1px solid #374151; padding: 8px 10px; background: #171c28; color: inherit; }
+textarea { min-height: 180px; resize: vertical; }
+#message { min-height: 0; height: 4.5em; width: 100%; box-sizing: border-box; resize: both; }
+button { background: #4f46e5; border: 0; cursor: pointer; }
+button.secondary { background: #283142; }
+button.danger { background: #a52323; }
+button:disabled { opacity: .55; cursor: default; }
+.check { display: flex; align-items: center; margin: 8px 0; }
+.card, article { background: #171c28; border: 1px solid #293246; border-radius: 9px; margin: 12px 0; padding: 11px; }
+pre { white-space: pre-wrap; font: inherit; max-height: 260px; overflow: auto; }
+article.user { border-left: 3px solid #60a5fa; }
+article.coach { border-left: 3px solid #34d399; }
+article.interviewer { border-left: 3px solid #f59e0b; }
+.subtle { color: #b9c2d8; }
+.warning { color: #fbbf24; }
+.error { color: #fca5a5; }
+.success { color: #6ee7b7; }
+#controls[hidden], [hidden] { display: none; }
+
+#stage-info { margin: 16px 0 12px; }
+#stage-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+#stage-prompt { margin: 0 0 4px; font-size: 13px; }
+
+#chat-tabs { display: flex; gap: 0; margin: 12px 0 0; }
+.tabs { border-bottom: 1px solid #293246; }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 16px; color: #b9c2d8; font-weight: 500; cursor: pointer; position: relative; }
+.tab.active { color: #eef2ff; border-bottom-color: #4f46e5; }
+
+.capture-card { position: relative; }
+.capture-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.status-confirmed { color: #6ee7b7; font-size: 13px; font-weight: 600; }
+.edit-btn { padding: 4px 10px; font-size: 12px; margin-left: auto; }
+
+#capture-edit-form { margin: 12px 0; }
+#capture-edit-form input, #capture-edit-form textarea { width: 100%; box-sizing: border-box; }
+#capture-edit-form textarea { min-height: 60px; }
+
+.check + #include-code-reason { margin-top: 2px; margin-bottom: 6px; }
+#send { margin-top: 8px; }
+.stage-row { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+#reset { margin-top: 16px; }

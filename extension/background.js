@@ -12,30 +12,52 @@ const MAX_EDITOR_CODE = 4000;
 const MAX_TURNS = 40;
 const MAX_HISTORY_BYTES = 128 * 1024;
 const MAX_SESSIONS = 8;
+const PERSISTENT_SESSION_KEY = "dsaCoach.sessionsByUrl";
 const MISMATCH_MESSAGE = "This conversation belongs to another page. Continue anyway to reuse its original problem text, or start a new capture.";
 const STAGES = [
+  { id: "restate", label: "Read & restate", fields: ["question", "discussion", "hint"],
+    objective: "Help you read through the problem carefully, restate it in your own words, make notes in the LeetCode editor, and confirm your understanding with the interviewer before moving on.",
+    userPrompt: "Read through the problem carefully. Restate it in your own words and make notes in the LeetCode editor. When you're ready, confirm your understanding with the interviewer.",
+    placeholder: "" },
   { id: "clarify", label: "Clarify", fields: ["question", "discussion", "hint"],
-    objective: "Help the learner ask clarifying questions about the problem's input, output, and constraints before they commit to any approach. Do not suggest an approach, pattern, or data structure yet.",
-    placeholder: "Ask a question about the input, output, or an edge case…" },
+    objective: "Help you ask clarifying questions about the problem's input, output, and constraints before you commit to any approach. Remind you to check the examples first — if the answer is already obvious from them, state your assumption aloud to the interviewer rather than asking. Do not suggest an approach, pattern, or data structure yet.",
+    userPrompt: "Ask clarifying questions about the input, output, or edge cases. Check the examples first — if something is already clear, state your assumption aloud instead of asking.",
+    placeholder: "" },
   { id: "examples", label: "Examples & pattern", fields: ["question", "discussion", "hint"],
-    objective: "Walk the learner through the given examples together and ask them to describe what the examples have in common. Help them name the pattern the examples suggest. Do not name the pattern or an approach yourself — ask questions that let the learner notice it.",
-    placeholder: "What do the examples have in common? What pattern do they suggest?" },
+    objective: "Walk through the given examples together and ask you to describe what they have in common. Help you name the pattern the examples suggest. Do not name the pattern or an approach yourself — ask questions that let you notice it.",
+    userPrompt: "Look at the examples. What do they have in common? What pattern do they suggest?",
+    placeholder: "" },
   { id: "brute-force", label: "Brute force", fields: ["question", "discussion", "hint"],
-    objective: "Get a brute-force solution stated in plain language before anything else. Treat a learner-proposed brute-force idea as the correct starting move: affirm it and ask them to state it precisely (what they would iterate over, what they would check). Do not raise time complexity, nested loops, or optimization at this stage, and do not volunteer the iteration strategy or the data structure yourself — ask a question that lets the learner arrive at it.",
-    placeholder: "Describe the simplest approach you can think of, even if it's slow…" },
+    objective: "Get a brute-force solution stated in plain language before anything else. Treat a brute-force idea you propose as the correct starting move: affirm it and ask you to state it precisely (what you would iterate over, what you would check). Do not raise time complexity, nested loops, or optimization at this stage, and do not volunteer the iteration strategy or the data structure yourself — ask a question that lets you arrive at it.",
+    userPrompt: "Describe the simplest brute-force approach you can think of, even if it's slow.",
+    placeholder: "" },
   { id: "optimize", label: "Optimize", fields: ["question", "discussion", "hint"],
-    objective: "Now that a brute force exists, help the learner find and remove its repeated or unnecessary work. Ask about what the brute force recomputes before naming a data structure or technique yourself, and let the learner propose one first.",
-    placeholder: "Where does the brute force repeat work it doesn't need to?" },
+    objective: "Now that a brute force exists, help you find and remove its repeated or unnecessary work. Ask about what the brute force recomputes before naming a data structure or technique, and let you propose one first.",
+    userPrompt: "Where does your brute force repeat work it doesn't need to?",
+    placeholder: "" },
   { id: "edge-cases", label: "Edge cases", fields: ["question", "discussion", "hint"],
-    objective: "Help the learner enumerate edge cases their approach must handle: empty input, single-element input, duplicates, and boundary sizes.",
-    placeholder: "What edge case could break your approach?" },
+    objective: "Help you enumerate edge cases your approach must handle: empty input, single-element input, duplicates, and boundary sizes. Point out specific cases you may have overlooked.",
+    userPrompt: "What edge cases could break your approach? Think about empty input, single elements, duplicates, and boundaries.",
+    placeholder: "" },
   { id: "pseudocode", label: "Pseudocode", fields: ["question", "discussion", "hint", "pseudocode"],
-    objective: "Help the learner turn their approach into step-by-step pseudocode. They should write it in the LeetCode editor; discuss specific steps with them here rather than writing it for them.",
-    placeholder: "Write your pseudocode in the LeetCode editor, then ask about a specific step here…" },
+    objective: "Help you turn your approach into step-by-step pseudocode. You should write it in the LeetCode editor; discuss specific steps here rather than having the coach write it for you.",
+    userPrompt: "Write your pseudocode in the LeetCode editor, then ask about a specific step here.",
+    placeholder: "" },
   { id: "code", label: "Code", fields: ["question", "discussion", "hint", "pseudocode", "code"],
-    objective: "Help the learner finish and debug real code. They should write it in the LeetCode editor. If they ask what you think of their code, read their actual editor contents (attached via the \"Attach my editor code\" checkbox) and critique that — never substitute your own pseudocode or code for an answer.",
-    placeholder: "Write your code in the LeetCode editor, then ask what you'd like feedback on…" },
+    objective: "Help you finish and debug real code. You should write it in the LeetCode editor. If you ask what the coach thinks of your code, read your actual editor contents (attached via the \"Attach my editor code\" checkbox) and critique that — never substitute the coach's own pseudocode or code for an answer.",
+    userPrompt: "Write your code in the LeetCode editor, then ask what you'd like feedback on.",
+    placeholder: "" },
 ];
+const STAGE_KICKOFF_LINES = {
+  restate: "Take a moment to read through the problem carefully. When you're ready, try restating it in your own words — what is it really asking you to do?",
+  clarify: "Now let's think about clarifying questions. What about this problem is ambiguous or unclear? Remember to check the examples first — if something is already obvious from them, just state your assumption aloud to the interviewer.",
+  examples: "Let's look at the examples together. What do you notice they have in common? Walk through one of them step by step and describe what's happening.",
+  "brute-force": "Good, you've got a solid understanding. Now let's think about the simplest possible approach — a brute force. What's the most straightforward way you could solve this, even if it's slow?",
+  optimize: "Nice — you've got a working brute force. Now let's look for where it's doing unnecessary or repeated work. What's the bottleneck?",
+  "edge-cases": "Before you start coding, let's think about edge cases. What inputs could break your approach? Think about empty input, single elements, very large or very small values, duplicates.",
+  pseudocode: "Let's turn your approach into step-by-step pseudocode. Write it in the LeetCode editor and we can discuss specific steps here.",
+  code: "Time to write real code. Write your implementation in the LeetCode editor, and ask me about anything you're unsure of.",
+};
 const STAGE_FIELDS = STAGES.map((stage) => stage.fields);
 function clampStage(index) { return Math.min(Math.max(Number(index) || 0, 0), STAGES.length - 1); }
 function stageFor(index) { return STAGES[clampStage(index)]; }
@@ -262,15 +284,13 @@ function hasCaptureText(capture) {
 }
 function publicSession(session) {
   if (!session) return null;
-  // Session records should never contain credentials, but strip credential-like
-  // fields defensively before a worker-to-panel message is assembled.
   const { tabId, windowId, origin, capture, key, apiKey, ...safe } = session;
   const stageIndex = clampStage(session.stageIndex);
   const stage = stageFor(stageIndex);
   return {
     ...safe,
     stageIndex,
-    stage: { index: stageIndex, id: stage.id, label: stage.label, objective: stage.objective, placeholder: stage.placeholder, fields: stage.fields },
+    stage: { index: stageIndex, id: stage.id, label: stage.label, userPrompt: stage.userPrompt, fields: stage.fields },
     stages: STAGES.map(({ id, label }) => ({ id, label })),
     canReadEditor: /^https:\/\/leetcode\.com\/problems\//.test(session.url || ""),
     maxCaptureChars: MAX_CAPTURE,
@@ -296,6 +316,18 @@ async function commitSession(mutator) {
     const ordered = Object.values(sessions).sort((a, b) => b.updatedAt - a.updatedAt);
     for (const stale of ordered.slice(MAX_SESSIONS)) delete sessions[stale.id];
     await chrome.storage.session.set({ [SESSION_KEY]: sessions });
+    // Persist only the mutated session when the mutator returns a single session.
+    // For batch operations (null/array returns) persist all confirmed sessions.
+    const mutated = result && typeof result === "object" && !Array.isArray(result)
+      ? (result.id ? result : (result.session || null))
+      : null;
+    if (mutated && mutated.url && mutated.confirmed) {
+      void persistSessionByUrl(mutated.url, publicSession(mutated));
+    } else {
+      for (const session of Object.values(sessions)) {
+        if (session.url && session.confirmed) void persistSessionByUrl(session.url, publicSession(session));
+      }
+    }
     return result;
   });
 }
@@ -313,6 +345,9 @@ async function rehydrateSessions() {
       if (session.pendingRequest) {
         session.pendingRequest = null; session.error = "Request interrupted — tap Retry to try again."; touch(session);
       }
+      if (session.pendingInterviewerRequest) {
+        session.pendingInterviewerRequest = null; touch(session);
+      }
       const clamped = clampStage(session.stageIndex);
       if (clamped !== session.stageIndex) { session.stageIndex = clamped; touch(session); }
     }
@@ -320,6 +355,41 @@ async function rehydrateSessions() {
   });
 }
 const sessionReady = rehydrateSessions();
+function normalizeUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "leetcode.com") return u.origin + u.pathname.replace(/\/+$/, "");
+    return u.origin + u.pathname;
+  } catch { return url; }
+}
+async function persistSessionByUrl(url, sessionData) {
+  const key = normalizeUrl(url);
+  if (!key) return;
+  try {
+    const store = (await chrome.storage.local.get(PERSISTENT_SESSION_KEY))[PERSISTENT_SESSION_KEY] || {};
+    store[key] = { ...sessionData, savedAt: now() };
+    const entries = Object.entries(store).sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0));
+    const trimmed = Object.fromEntries(entries.slice(0, MAX_SESSIONS));
+    await chrome.storage.local.set({ [PERSISTENT_SESSION_KEY]: trimmed });
+  } catch {}
+}
+async function loadSessionByUrl(url) {
+  const key = normalizeUrl(url);
+  if (!key) return null;
+  try {
+    const store = (await chrome.storage.local.get(PERSISTENT_SESSION_KEY))[PERSISTENT_SESSION_KEY] || {};
+    return store[key] || null;
+  } catch { return null; }
+}
+async function removeSessionByUrl(url) {
+  const key = normalizeUrl(url);
+  if (!key) return;
+  try {
+    const store = (await chrome.storage.local.get(PERSISTENT_SESSION_KEY))[PERSISTENT_SESSION_KEY] || {};
+    delete store[key];
+    await chrome.storage.local.set({ [PERSISTENT_SESSION_KEY]: store });
+  } catch {}
+}
 async function activeTabFor(windowId) { const tabs = await chrome.tabs.query({ active: true, windowId }); return tabs[0] || null; }
 
 function clipCapture(capture) {
@@ -370,13 +440,26 @@ async function captureFor(session) {
 function launchCoach(tab) {
   if (!tab?.id) { badgeError("No active tab to coach."); return; }
   const captureId = crypto.randomUUID();
-  // Must remain before every await: Chrome consumes user activation at the first async boundary.
   chrome.sidePanel.open({ tabId: tab.id }).catch(() => badgeError("Chrome could not open the coaching panel for this page.", tab.id));
   void (async () => {
     await sessionReady;
+    const existing = await loadSessionByUrl(tab.url || "");
+    if (existing && existing.confirmed && existing.stage !== undefined) {
+      const session = await commitSession((sessions) => {
+        const normalized = normalizeUrl(tab.url || "");
+        for (const [sid, s] of Object.entries(sessions)) {
+          if (s.url && normalizeUrl(s.url) === normalized) delete sessions[sid];
+        }
+        const id = crypto.randomUUID();
+        const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: existing.capture || null, captureStatus: "preview", confirmed: true, mismatchAck: null, stageIndex: existing.stageIndex || 0, history: existing.history || [], interviewerHistory: existing.interviewerHistory || [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now() };
+        sessions[id] = record; return record;
+      });
+      await pushSession(session);
+      return;
+    }
     const session = await commitSession((sessions) => {
       const id = crypto.randomUUID();
-      const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: null, captureStatus: "capturing", confirmed: false, mismatchAck: null, stageIndex: 0, history: [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now() };
+      const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: null, captureStatus: "capturing", confirmed: false, mismatchAck: null, stageIndex: 0, history: [], interviewerHistory: [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now() };
       sessions[id] = record; return record;
     });
     await pushSession(session);
@@ -398,7 +481,8 @@ function launchCoach(tab) {
   })();
 }
 
-const COACH_PERSONA = "You are a calm JavaScript DSA interview coach. Work through problems the way a strong interview candidate does: study the given examples together with the learner and help them name the pattern the examples suggest, derive the most intuitive approach from that pattern, get a brute-force solution stated in plain language, and only then optimize it. When a learner proposes a brute-force approach, affirm it as the correct place to start and ask them to state it precisely — do not raise time complexity, nested loops, or Big-O until a working brute force exists or the learner asks about efficiency. Never spell out the iteration strategy or name the data structure yourself; ask a question that lets the learner get there. Prefer modern JavaScript in any discussion, pseudocode, or code: refer to Map, Set, or Object.groupBy by name, and use current syntax.";
+const COACH_PERSONA = "You are a calm, encouraging JavaScript DSA interview coach. Always address the user directly as 'you' — never say 'the learner'. Respond to what the user actually said: reference their specific words, acknowledge what they noticed, catch their mistakes (off-by-one errors, confusing concepts, wrong assumptions), and guide them in baby steps toward the next stage. Be specific and encouraging, not generic. When the user proposes something good, say so and explain why briefly, then nudge them to the next step. When the user makes a mistake, point it out gently with a concrete counter-example. Work through problems the way a strong interview candidate does: study the given examples together with the user and help them name the pattern, derive the most intuitive approach from that pattern, get a brute-force solution stated in plain language, and only then optimize it. When the user proposes a brute-force approach, affirm it as the correct place to start and ask them to state it precisely. Never spell out the iteration strategy or name the data structure yourself; ask a question that lets the user get there. Prefer modern JavaScript in any discussion, pseudocode, or code: refer to Map, Set, or Object.groupBy by name, and use current syntax.";
+const INTERVIEWER_PERSONA = "You are playing the role of a friendly but professional technical interviewer in a coding interview for a JavaScript position. Answer the candidate's clarifying questions directly and concisely, as a real interviewer would. Provide specific answers about input ranges, expected outputs, edge case handling, and constraints. Stay in character as the interviewer — do not coach, teach, or guide. Just answer questions about the problem specification. If the candidate asks something not specified in the problem, give a reasonable answer that a real interviewer would give. Always address the candidate as 'you'.";
 function promptFor(session, userText, reminder = "", editorCode = "", codeRequested = false) {
   const stage = stageFor(session.stageIndex);
   const allowed = stage.fields.join(", ");
@@ -407,35 +491,40 @@ function promptFor(session, userText, reminder = "", editorCode = "", codeReques
   // History is deliberately part of the provider context, not just panel display.
   // This makes a retry and every later turn continue the same Socratic discussion.
   const history = (session.history || []).flatMap((turn) => {
-    if (turn.role === "user") return [{ role: "user", content: `Learner message: ${turn.text}` }];
+    if (turn.role === "user") return [{ role: "user", content: `User message: ${turn.text}` }];
     const reply = {};
-    // Pattern metadata is used locally for the final template link. Replaying it
-    // to the provider on every turn adds tokens without helping the conversation.
-    // Fields the learner's current stage no longer allows (e.g. after going back)
-    // are also dropped so replayed history can't leak stage-locked content.
     for (const field of ["question", "discussion", "hint", "pseudocode", "code"]) {
       if (turn[field] && stage.fields.includes(field)) reply[field] = turn[field];
     }
     return Object.keys(reply).length ? [{ role: "assistant", content: JSON.stringify(reply) }] : [];
   });
-  // Three distinct states reach this point, and each needs different guidance:
-  // the learner never ticked "Attach my editor code" this turn; they ticked it
-  // but nothing could be read (empty editor, or the read failed); or code was
-  // actually attached below. Collapsing the first two into "no code" made the
-  // coach tell someone who already ticked the box to tick it again.
   const codeGuidance = !codeRequested
-    ? ` If asked what you think of the learner's code, say plainly that you cannot see it and ask them to tick "Attach my editor code" and resend — never invent or substitute your own pseudocode or code for an answer.`
+    ? ` If asked what you think of the user's code, say plainly that you cannot see it and ask them to tick "Attach my editor code" and resend — never invent or substitute your own pseudocode or code for an answer.`
     : !editorCode
-    ? ` The learner ticked "Attach my editor code" for this message, but nothing could be read from it (the editor may be empty, or the read failed) — do not ask them to tick it again. If asked what you think of their code, say plainly that no code came through this time and ask them to make sure the LeetCode editor has code in it and resend — never invent or substitute your own pseudocode or code for an answer.`
+    ? ` The user ticked "Attach my editor code" for this message, but nothing could be read from it (the editor may be empty, or the read failed) — do not ask them to tick it again. If asked what you think of their code, say plainly that no code came through this time and ask them to make sure the LeetCode editor has code in it and resend — never invent or substitute your own pseudocode or code for an answer.`
     : "";
   const messages = [
-    { role: "system", content: `${COACH_PERSONA} Current stage: ${stage.id} — ${stage.objective} Return JSON only with question, discussion, hint, pseudocode, code, matchedPatternId. Only these fields may be non-empty: ${allowed}. Do not put source code in question, discussion, or hint. Ask the learner to reason before revealing help.${codeGuidance}${nudge} ${reminder}\nCoaching knowledge: ${JSON.stringify(COACHING_KNOWLEDGE)}` },
+    { role: "system", content: `${COACH_PERSONA} Current stage: ${stage.id} — ${stage.objective} Return JSON only with question, discussion, hint, pseudocode, code, matchedPatternId. Only these fields may be non-empty: ${allowed}. Do not put source code in question, discussion, or hint. Ask the user to reason before revealing help.${codeGuidance}${nudge} ${reminder}\nCoaching knowledge: ${JSON.stringify(COACHING_KNOWLEDGE)}` },
     { role: "user", content: `Confirmed problem:\n${JSON.stringify(session.capture)}` },
     ...history,
   ];
-  if (editorCode) messages.push({ role: "user", content: `The learner's current LeetCode editor contents, attached because they asked. This is a best-effort read of the editor's rendered DOM: for a long file it may include only the lines currently scrolled into view, not the whole file. If the code looks like it might be cut off (e.g. it doesn't start at the function signature, or trails off mid-statement), say so and ask the learner to scroll and resend rather than assuming you're seeing everything:\n${editorCode}` });
-  messages.push({ role: "user", content: `Learner message: ${userText}` });
+  if (editorCode) messages.push({ role: "user", content: `The user's current LeetCode editor contents, attached because they asked. This is a best-effort read of the editor's rendered DOM: for a long file it may include only the lines currently scrolled into view, not the whole file. If the code looks like it might be cut off (e.g. it doesn't start at the function signature, or trails off mid-statement), say so and ask the user to scroll and resend rather than assuming you're seeing everything:\n${editorCode}` });
+  messages.push({ role: "user", content: `User message: ${userText}` });
   return messages;
+}
+function interviewerPromptFor(session, userText) {
+  const stage = stageFor(session.stageIndex);
+  const history = (session.interviewerHistory || []).flatMap((turn) => {
+    if (turn.role === "user") return [{ role: "user", content: turn.text }];
+    if (turn.role === "interviewer") return [{ role: "assistant", content: turn.text }];
+    return [];
+  });
+  return [
+    { role: "system", content: `${INTERVIEWER_PERSONA}\nCurrent stage: ${stage.id}. The candidate is working through a coding interview problem. Answer their questions about the problem specification directly.` },
+    { role: "user", content: `Problem:\n${JSON.stringify(session.capture)}` },
+    ...history,
+    { role: "user", content: userText },
+  ];
 }
 function containsCode(value) {
   return /```|^\s{4,}(?:if|for|while|return|const|let|function|class)\b|(?:^|\n)\s*(?:for|while|if)\s*\(|=>|\breturn\s+[^.\n]+;|[{}]\s*$/m.test(value || "");
@@ -572,20 +661,82 @@ async function handlePanelMessage(port, context, message) {
   }
   if (message.type === "coach:advance") {
     if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the captured problem text before advancing the coaching stages." });
-    const updated = await commitSession((sessions) => { const current = sessions[session.id]; if (!current) return null; current.stageIndex = clampStage(current.stageIndex + 1); touch(current); return current; });
+    const updated = await commitSession((sessions) => {
+      const current = sessions[session.id]; if (!current) return null;
+      current.stageIndex = clampStage(current.stageIndex + 1);
+      const newStage = stageFor(current.stageIndex);
+      const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Welcome to the ${newStage.label} stage. What would you like to discuss?`;
+      current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      capHistory(current); touch(current); return current;
+    });
     return pushSession(updated);
   }
   if (message.type === "coach:go-back") {
     if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the captured problem text before changing the coaching stage." });
-    const updated = await commitSession((sessions) => { const current = sessions[session.id]; if (!current) return null; current.stageIndex = clampStage(current.stageIndex - 1); touch(current); return current; });
+    const updated = await commitSession((sessions) => {
+      const current = sessions[session.id]; if (!current) return null;
+      current.stageIndex = clampStage(current.stageIndex - 1);
+      const newStage = stageFor(current.stageIndex);
+      const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Back to the ${newStage.label} stage. What would you like to revisit?`;
+      current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      capHistory(current); touch(current); return current;
+    });
     return pushSession(updated);
+  }
+  if (message.type === "coach:update-capture") {
+    if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the problem before editing." });
+    const updated = await commitSession((sessions) => {
+      const current = sessions[session.id]; if (!current) return null;
+      current.capture = clipCapture({ ...current.capture, ...message.capture }); touch(current); return current;
+    });
+    return pushSession(updated);
+  }
+  if (message.type === "coach:send-interviewer") {
+    if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the captured problem text before sending it to the interviewer." });
+    const text = String(message.text || "").trim();
+    if (!text) return;
+    const requestId = crypto.randomUUID();
+    const begun = await commitSession((sessions) => {
+      const current = sessions[session.id];
+      if (!current) return null;
+      current.pendingInterviewerRequest = { requestId }; current.error = ""; touch(current); return { session: current };
+    });
+    if (!begun) return;
+    const pending = begun.session; await pushSession(pending);
+    void (async () => {
+      try {
+        const credential = await activeCredential();
+        if (!credential) throw new Error("Configure an API key in extension settings first.");
+        const raw = await providerChat(credential.provider, interviewerPromptFor(pending, text), { apiKey: credential.key });
+        const replyText = raw.trim();
+        const updated = await commitSession((sessions) => {
+          const current = sessions[session.id];
+          if (!current || current.pendingInterviewerRequest?.requestId !== requestId) return null;
+          current.pendingInterviewerRequest = null;
+          current.interviewerHistory = current.interviewerHistory || [];
+          current.interviewerHistory.push({ role: "user", text, at: now() }, { role: "interviewer", text: replyText, at: now() });
+          touch(current); return current;
+        });
+        await pushSession(updated);
+      } catch (error) {
+        const updated = await commitSession((sessions) => {
+          const current = sessions[session.id];
+          if (!current || current.pendingInterviewerRequest?.requestId !== requestId) return null;
+          current.pendingInterviewerRequest = null; current.error = error.message || "The interviewer request failed."; touch(current); return current;
+        });
+        await pushSession(updated);
+      }
+    })();
+    return;
   }
   if (message.type === "coach:get-template") {
     if (clampStage(session.stageIndex) !== STAGES.length - 1 || !TEMPLATES[message.templateKey]) return port.postMessage({ type: "coach:error", error: "A matching template is available only after the full-code stage." });
     return port.postMessage({ type: "coach:template", key: message.templateKey, code: TEMPLATES[message.templateKey] });
   }
   if (message.type === "coach:reset") {
+    const sessionUrl = session.url;
     const updated = await commitSession((sessions) => { const current = sessions[session.id]; if (!current) return null; current.epoch++; delete sessions[session.id]; return null; });
+    if (sessionUrl) await removeSessionByUrl(sessionUrl);
     context.currentSessionId = null; return sendPortState(port, context);
   }
   if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the captured problem text before sending it to a provider." });
