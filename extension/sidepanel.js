@@ -35,12 +35,17 @@ function switchTab(tab) {
   if (tab === "coach") {
     lastCoachHistoryLen = (current?.history || []).length;
   }
+  if (current) {
+    const pending = tab === "interviewer" ? Boolean(current.pendingInterviewerRequest) : Boolean(current.pendingRequest);
+    $("#send").disabled = pending;
+    $("#send").textContent = tab === "interviewer" ? (pending ? "Asking interviewer..." : "Ask interviewer") : (pending ? "Asking coach..." : "Ask coach");
+  }
 }
 function renderCapture() {
   const capture = current.capture;
   const captureLimit = (current.maxCaptureChars || 8000).toLocaleString();
-  if (!capture) {
-    $("#capture").innerHTML = `<p>${current.captureStatus === "capturing" ? "Capturing problem text…" : current.captureStatus === "empty" ? "No problem text was found. Select text on the page and start a new coaching session." : "Capture unavailable."}</p>`;
+  if (!capture || current.captureStatus !== "preview") {
+    $("#capture").innerHTML = `<p>${current.captureStatus === "capturing" ? "Capturing problem text…" : current.captureStatus === "empty" ? "No problem text was found. Select text on the page and start a new coaching session." : current.captureStatus === "error" ? (current.error || "Capture failed.") : "Capture unavailable."}</p>`;
     return;
   }
   const statusLabel = current.confirmed ? '<span class="status-confirmed">Confirmed problem</span><button id="edit-capture" class="secondary edit-btn">Edit</button>' : "";
@@ -66,7 +71,9 @@ function render() {
   renderCapture();
   $("#capture-edit-form").hidden = true;
   $("#capture").hidden = false;
-  $("#confirmation").hidden = !current.capture || current.confirmed;
+  $("#confirmation").hidden = current.captureStatus !== "preview" || current.confirmed;
+  const isCapturing = current.captureStatus === "capturing";
+  $("#rescan").hidden = !current || !current.confirmed || isCapturing;
   $("#controls").hidden = !current.confirmed || Boolean(current.mismatch);
   $("#chat-tabs").hidden = !current.confirmed;
   $("#mismatch").hidden = !current.mismatch;
@@ -75,7 +82,6 @@ function render() {
   const stage = current.stage || { index: 0, label: "" };
   const stages = current.stages || [];
   $("#stage-title").textContent = stages.length ? `Stage ${stage.index + 1} of ${stages.length}: ${stage.label}` : "";
-  $("#stage-prompt").textContent = stage.userPrompt || "";
   $("#back").disabled = !stage.index;
   const nextStage = stages[stage.index + 1];
   $("#advance").textContent = nextStage ? `Reveal next stage (${nextStage.label})` : "Full code unlocked";
@@ -86,14 +92,15 @@ function render() {
   const canAttachCode = current.canReadEditor && stageHasCode;
   $("#include-code").disabled = !canAttachCode;
   $("#include-code-reason").textContent = !current.canReadEditor
-    ? "Only available on a LeetCode problem page."
+    ? "(Only available on a LeetCode problem page.)"
     : !stageHasCode
-    ? "Available once you reach the pseudocode or code stage."
-    : "Best-effort read of the visible editor — for a long file, scroll to the part you're asking about first.";
+    ? "(Available once you reach the pseudocode or code stage.)"
+    : "(Best-effort read of the visible editor — for a long file, scroll to the part you're asking about first.)";
   if (!canAttachCode) $("#include-code").checked = false;
 
-  $("#send").disabled = Boolean(current.pendingRequest);
-  $("#send").textContent = activeTab === "interviewer" ? "Ask interviewer" : "Ask coach";
+  const pending = activeTab === "interviewer" ? Boolean(current.pendingInterviewerRequest) : Boolean(current.pendingRequest);
+  $("#send").disabled = pending;
+  $("#send").textContent = activeTab === "interviewer" ? (pending ? "Asking interviewer..." : "Ask interviewer") : (pending ? "Asking coach..." : "Ask coach");
   $("#retry").hidden = !current.error?.includes("interrupted") && !current.pendingRequest;
   $("#history-note").textContent = current.historyNotice || "";
 
@@ -153,7 +160,10 @@ function submitMessage() {
   const includeCode = $("#include-code").checked;
   send("coach:send", { text, includeCode });
 }
+const doRescan = () => send("coach:rescan-capture");
 $("#confirm").onclick = () => send("coach:confirm-capture", { captureId: current?.captureId });
+$("#rescan").onclick = doRescan;
+$("#rescan-preview").onclick = doRescan;
 $("#back").onclick = () => send("coach:go-back");
 $("#advance").onclick = () => send("coach:advance");
 $("#send").onclick = submitMessage;

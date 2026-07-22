@@ -42,10 +42,17 @@
     const withoutExamples = examplesMatch
       ? withoutConstraints.slice(0, examplesMatch.index) + withoutConstraints.slice(examplesMatch.index + examplesMatch[0].length)
       : withoutConstraints;
-    // If stripping both sections leaves nothing (e.g. the whole body was just
-    // examples/constraints), fall back to the original text instead of sending
-    // an empty description.
-    const description = withoutExamples.trim() || fullText;
+    // Strip Follow-up section from description — it is a post-problem heading,
+    // not part of the core statement.  Consistent with how Constraints and
+    // Example sections are removed earlier so they don't inflate the
+    // meaningful-content character check.
+    const followUpStripped = withoutExamples.replace(/\s*Follow-up[\s\S]*$/i, "").trim();
+    // If stripping Follow-up leaves nothing (e.g. the body was just
+    // headings/follow-up), do NOT fall back to the original text — this
+    // prevents Follow-up-only placeholder text from prematurely ending the
+    // capture polling loop. The poll condition below separately checks the
+    // Follow-up-stripped description length.
+    const description = withoutExamples.match(/\s*Follow-up[\s\S]*$/i) ? followUpStripped : (followUpStripped || fullText);
     return { title, description, examples, constraints, sourceUrl: location.href };
   }
 
@@ -71,7 +78,15 @@
       return;
     }
     if (message?.type === "capture:leetcode") {
-      chrome.runtime.sendMessage({ type: "capture:result", requestId: message.requestId, capture: extractLeetCode() });
+      void (async () => {
+        const deadline = Date.now() + 10000;
+        let capture = extractLeetCode();
+        while (((capture.description + capture.examples + capture.constraints).length < 20 || (capture.title + capture.description + capture.examples + capture.constraints).length < 40 || capture.description.length < 20) && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          capture = extractLeetCode();
+        }
+        chrome.runtime.sendMessage({ type: "capture:result", requestId: message.requestId, capture: capture || {} });
+      })();
       sendResponse({ ok: true });
       return;
     }

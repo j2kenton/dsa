@@ -37,7 +37,7 @@ function createStorage(seed, failures = {}, delays = {}) {
   return { state, local: area("local"), session: area("session") };
 }
 
-async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, delays = {}, tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" }], selection = "", templates = {}, knowledge = [], waitForReady = true, editorCodeResponse = undefined } = {}) {
+async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, delays = {}, tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" }], selection = "", templates = {}, knowledge = [], waitForReady = true, editorCodeResponse = undefined, captureResponse = undefined, sidePanelConfig = {} } = {}) {
   const storage = createStorage(seed, failures, delays);
   const actionCalls = [];
   const scriptingCalls = [];
@@ -50,29 +50,62 @@ async function loadWorker({ seed = { local: {}, session: {} }, failures = {}, de
     },
     contextMenus: { removeAll(callback) { callback(); }, create() {}, onClicked: event() },
     action: { onClicked: event(), setBadgeText(value) { actionCalls.push(["badge", value]); }, setBadgeBackgroundColor() {}, setTitle(value) { actionCalls.push(["title", value]); } },
-    sidePanel: { open() { actionCalls.push(["open"]); return Promise.resolve(); } },
+    sidePanel: {
+      _states: { ...sidePanelConfig },
+      async open({ tabId }) {
+        actionCalls.push(["open"]);
+        const state = this._states[tabId];
+        if (state === "unexpected-disabled") { throw new Error("Internal error"); }
+        if (state === "disabled" || state === "setoptions-denied") { throw new Error("Side panel is not enabled for this tab"); }
+        if (state === "access-denied") { throw new Error("Cannot access this page"); }
+        if (state === "unexpected") { throw new Error("Internal error"); }
+        if (state === "getoptions-error") { throw new Error("Internal error"); }
+      },
+      async setOptions({ tabId, path, enabled }) {
+        actionCalls.push(["setOptions"]);
+        const state = this._states[tabId];
+        if (state === "setoptions-denied") { throw new Error("Access denied"); }
+        this._states[tabId] = enabled !== false ? "enabled" : "disabled";
+      },
+      async getOptions({ tabId }) {
+        actionCalls.push(["getOptions"]);
+        const state = this._states[tabId];
+        if (state === "getoptions-error") { throw new Error("Storage error"); }
+        if (state === "disabled" || state === "setoptions-denied" || state === "unexpected-disabled") return { enabled: false, path: "sidepanel.html" };
+        return { enabled: true, path: "sidepanel.html" };
+      },
+    },
     tabs: {
       onRemoved: event(), onUpdated: event(), onActivated: event(),
       async query(query) { return tabs.filter((tab) => (!query?.windowId || tab.windowId === query.windowId) && (!query?.active || tab.active !== false)); },
-      async sendMessage(tabId, message) {
-        tabMessages.push([tabId, message]);
-        if (message?.type === "editor:read" && editorCodeResponse !== undefined) {
-          const tab = tabs.find((candidate) => candidate.id === tabId);
-          chrome.runtime.onMessage.listeners[0](
-            { type: "editor:result", requestId: message.requestId, code: editorCodeResponse },
-            { id: "test-extension", tab: { id: tabId }, frameId: 0, url: tab?.url || "" },
-            () => {},
-          );
-          return { ok: true };
-        }
-        throw new Error("No content script in this unit harness");
-      },
+        async sendMessage(tabId, message) {
+          tabMessages.push([tabId, message]);
+          if (message?.type === "capture:leetcode" && captureResponse !== undefined) {
+            const tab = tabs.find((candidate) => candidate.id === tabId);
+            chrome.runtime.onMessage.listeners[0](
+              { type: "capture:result", requestId: message.requestId, capture: captureResponse },
+              { id: "test-extension", tab: { id: tabId }, frameId: 0, url: tab?.url || "" },
+              () => {},
+            );
+            return { ok: true };
+          }
+          if (message?.type === "editor:read" && editorCodeResponse !== undefined) {
+            const tab = tabs.find((candidate) => candidate.id === tabId);
+            chrome.runtime.onMessage.listeners[0](
+              { type: "editor:result", requestId: message.requestId, code: editorCodeResponse },
+              { id: "test-extension", tab: { id: tabId }, frameId: 0, url: tab?.url || "" },
+              () => {},
+            );
+            return { ok: true };
+          }
+          throw new Error("No content script in this unit harness");
+        },
     },
     windows: { onFocusChanged: event(), async get(id) { if (!tabs.some((tab) => tab.windowId === id)) throw new Error("missing window"); return { id }; } },
     scripting: { async executeScript(...args) { scriptingCalls.push(args); return [{ result: { selected: selection, sourceUrl: tabs[0]?.url || "" } }]; } },
   };
   const context = vm.createContext({ chrome, crypto: webcrypto, TextEncoder, URL, setTimeout, clearTimeout, console, importScripts() {}, TEMPLATES: templates, COACHING_KNOWLEDGE: knowledge });
-  vm.runInContext(`${backgroundSource}\nglobalThis.__core = { credentialReady, sessionReady, resolveCredential, nextGeneration, setCredential, setCredentialMode, deleteCredential, deleteRollbackMessage, activeCredential, credentialState, clipCapture, capHistory, historyBytes, promptFor, validateReply, validatedFieldsOnly, commitSession, readSessions, touch, publicSession, pushSession, launchCoach, captureFor, findSessionForTab, templateOutcome, sessionForPort, handlePanelMessage, beginProviderRequest, rehydrateSessions, waitForSessionCommits, STAGES, STAGE_FIELDS, clampStage, stageFor, stageFieldsFor, hasCaptureText, readEditorCode, MAX_CAPTURE, MAX_EDITOR_CODE, MAX_HISTORY_BYTES, CREDENTIAL_KEY, SESSION_KEY };`, context, { filename: "background.js" });
+  vm.runInContext(`${backgroundSource}\nglobalThis.__core = { credentialReady, sessionReady, resolveCredential, nextGeneration, setCredential, setCredentialMode, deleteCredential, deleteRollbackMessage, activeCredential, credentialState, clipCapture, capHistory, historyBytes, promptFor, validateReply, validatedFieldsOnly, commitSession, readSessions, touch, publicSession, pushSession, launchCoach, captureFor, findSessionForTab, templateOutcome, sessionForPort, handlePanelMessage, beginProviderRequest, rehydrateSessions, waitForSessionCommits, ensurePanelOpen, isRestrictedProtocol, STAGES, STAGE_FIELDS, clampStage, stageFor, stageFieldsFor, hasCaptureText, readEditorCode, persistSessionByUrl, loadSessionByUrl, MAX_CAPTURE, MAX_EDITOR_CODE, MAX_HISTORY_BYTES, CREDENTIAL_KEY, SESSION_KEY };`, context, { filename: "background.js" });
   if (waitForReady) {
     await context.__core.credentialReady;
     await context.__core.sessionReady;
@@ -285,6 +318,208 @@ describe("background worker core", () => {
     expect(actionCalls).toContainEqual(["badge", { text: "!" }]);
   });
 
+  it("opens the side panel on first open() call for a LeetCode problem tab", async () => {
+    const { core, actionCalls } = await loadWorker();
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    core.launchCoach({ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" });
+    await flushWork(core);
+    const openCalls = actionCalls.filter(([type]) => type === "open");
+    expect(openCalls).toHaveLength(1);
+    const badgeCalls = actionCalls.filter(([type, value]) => type === "badge" && value.text === "!");
+    expect(badgeCalls).toHaveLength(0);
+  });
+
+  it("ensurePanelOpen with gesture: false calls setOptions but not open", async () => {
+    const { core, actionCalls } = await loadWorker();
+    const fakeTab = { id: 1, windowId: 1, url: "https://example.test/" };
+    await core.ensurePanelOpen(fakeTab, { gesture: false });
+    expect(actionCalls.filter(([type]) => type === "open")).toHaveLength(0);
+    expect(actionCalls.filter(([type]) => type === "setOptions")).toHaveLength(1);
+  });
+
+  it("isRestrictedProtocol returns true for chrome:, about:, data: and false for normal URLs", async () => {
+    const { core } = await loadWorker();
+    expect(core.isRestrictedProtocol("chrome://extensions")).toBe(true);
+    expect(core.isRestrictedProtocol("about:blank")).toBe(true);
+    expect(core.isRestrictedProtocol("data:text/html,hello")).toBe(true);
+    expect(core.isRestrictedProtocol("chrome-extension://abc/panel.html")).toBe(true);
+    expect(core.isRestrictedProtocol("https://leetcode.com/problems/two-sum/")).toBe(false);
+    expect(core.isRestrictedProtocol("http://example.test/")).toBe(false);
+    expect(core.isRestrictedProtocol("")).toBe(false);
+    expect(core.isRestrictedProtocol(null)).toBe(false);
+  });
+
+  it("recognizes a disabled tab, enables it, and shows the second-click prompt without retrying open", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "disabled" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const openCalls = actionCalls.filter(([type]) => type === "open");
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    const badgeCalls = actionCalls.filter(([type, value]) => type === "badge" && value.text === "!");
+    expect(openCalls).toHaveLength(1);
+    expect(setOptionsCalls).toHaveLength(1);
+    expect(badgeCalls).toHaveLength(1);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("click the icon again"))).toBe(true);
+  });
+
+  it("treats an access-denied open failure as a site-access error and does not attempt recovery", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "access-denied" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(0);
+    const badgeCalls = actionCalls.filter(([type, value]) => type === "badge" && value.text === "!");
+    expect(badgeCalls).toHaveLength(1);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Has access to this site"))).toBe(true);
+  });
+
+  it("treats a restricted-chrome URL open failure as a site-access error without recovery", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "access-denied" },
+    });
+    const tab = { id: 1, url: "chrome://extensions" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(0);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Has access to this site"))).toBe(true);
+  });
+
+  it("treats an unexpected open failure (options already enabled) as a neutral error without recovery", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "unexpected" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(0);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Could not open the coaching panel"))).toBe(true);
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Has access to this site"))).toBe(false);
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("click the icon again"))).toBe(false);
+  });
+
+  it("treats a getOptions() failure during open failure as an unexpected error without recovery", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "getoptions-error" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(0);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Could not open the coaching panel"))).toBe(true);
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("click the icon again"))).toBe(false);
+  });
+
+  it("coach:reset does not call sidePanel.open or badge panel-open errors", async () => {
+    const tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/", active: true }];
+    const { core, chrome, actionCalls } = await loadWorker({ tabs, selection: "Given an array of integers nums and an integer target, return indices of the two numbers.", captureResponse: { title: "Two Sum", description: "A".repeat(40), sourceUrl: "https://leetcode.com/problems/two-sum/" } });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", captureId: "old-cid", capture: { title: "Old", description: "Old problem" }, captureStatus: "preview", confirmed: true, stageIndex: 2, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1, stageKickoffsSent: ["restate", "clarify"] };
+      return sessions.s1;
+    });
+    const posts = [];
+    const port = { postMessage(m) { posts.push(m); }, disconnect() {} };
+    const panelContext = { windowId: 1, currentSessionId: "s1" };
+    actionCalls.length = 0;
+    await core.handlePanelMessage(port, panelContext, { type: "coach:reset", sessionId: "s1" });
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await core.waitForSessionCommits();
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    const openCalls = actionCalls.filter(([type]) => type === "open");
+    expect(openCalls).toHaveLength(0);
+    const badgeCalls = actionCalls.filter(([type, value]) => type === "badge" && value.text === "!");
+    expect(badgeCalls).toHaveLength(0);
+  });
+
+  it("a recognized disabled error followed by a denied setOptions exercises the full open→getOptions→setOptions path and reclassifies to site-access badge", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "setoptions-denied" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const getOptionsCalls = actionCalls.filter(([type]) => type === "getOptions");
+    expect(getOptionsCalls).toHaveLength(1);
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(1);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Has access to this site"))).toBe(true);
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("click the icon again"))).toBe(false);
+  });
+
+  it("does not retry open() after the first failure (gesture-expiry-safe)", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "disabled" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const openCalls = actionCalls.filter(([type]) => type === "open");
+    expect(openCalls).toHaveLength(1);
+  });
+
+  it("calls open before getOptions before setOptions in the recovery path", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "disabled" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const openIdx = actionCalls.findIndex(([type]) => type === "open");
+    const getOptsIdx = actionCalls.findIndex(([type]) => type === "getOptions");
+    const setOptsIdx = actionCalls.findIndex(([type]) => type === "setOptions");
+    expect(openIdx).toBeLessThan(getOptsIdx);
+    expect(getOptsIdx).toBeLessThan(setOptsIdx);
+  });
+
+  it("does not recover when open error is not a known disabled signature even if getOptions shows disabled (pre-fix regression guard)", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: { 1: "unexpected-disabled" },
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    const setOptionsCalls = actionCalls.filter(([type]) => type === "setOptions");
+    expect(setOptionsCalls).toHaveLength(0);
+    const titleCalls = actionCalls.filter(([type]) => type === "title");
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("click the icon again"))).toBe(false);
+    expect(titleCalls.some(([, value]) => value.title && value.title.includes("Could not open the coaching panel"))).toBe(true);
+  });
+
+  it("preserves enabled sidePanel state across a simulated worker restart so the next open succeeds without inspection or recovery", async () => {
+    const { core: core1, actionCalls: calls1 } = await loadWorker({
+      sidePanelConfig: { 1: "enabled" },
+    });
+    await core1.ensurePanelOpen({ id: 1, url: "https://leetcode.com/problems/two-sum/" }, { gesture: true });
+    expect(calls1.filter(([type]) => type === "open")).toHaveLength(1);
+    expect(calls1.filter(([type]) => type === "setOptions")).toHaveLength(0);
+    expect(calls1.filter(([type]) => type === "getOptions")).toHaveLength(0);
+
+    const { core: core2, actionCalls: calls2 } = await loadWorker({
+      sidePanelConfig: { 1: "enabled" },
+    });
+    await core2.ensurePanelOpen({ id: 1, url: "https://leetcode.com/problems/two-sum/" }, { gesture: true });
+    expect(calls2.filter(([type]) => type === "open")).toHaveLength(1);
+    expect(calls2.filter(([type]) => type === "setOptions")).toHaveLength(0);
+    expect(calls2.filter(([type]) => type === "getOptions")).toHaveLength(0);
+  });
+
+  it("opens on the first click without inspection or recovery after a simulated extension reload (Option A default_path)", async () => {
+    const { core, actionCalls } = await loadWorker({
+      sidePanelConfig: {},
+    });
+    const tab = { id: 1, url: "https://leetcode.com/problems/two-sum/" };
+    await core.ensurePanelOpen(tab, { gesture: true });
+    expect(actionCalls.filter(([type]) => type === "open")).toHaveLength(1);
+    expect(actionCalls.filter(([type]) => type === "setOptions")).toHaveLength(0);
+    expect(actionCalls.filter(([type]) => type === "getOptions")).toHaveLength(0);
+    expect(actionCalls.filter(([type]) => type === "title")).toHaveLength(0);
+  });
+
   it("uses the executeScript selection path verbatim off LeetCode and marks an empty selection empty", async () => {
     const session = { tabId: 1, url: "https://example.test/problem", origin: "https://example.test" };
     const selected = "line one\n    indented line\nline three";
@@ -300,11 +535,11 @@ describe("background worker core", () => {
   });
 
   it("prefers the structured LeetCode route before falling back to selection", async () => {
-    const { core, tabMessages, scriptingCalls } = await loadWorker();
+    const { core, tabMessages, scriptingCalls } = await loadWorker({ captureResponse: null });
     const pending = core.captureFor({ tabId: 1, url: "https://leetcode.com/problems/two-sum/", origin: "https://leetcode.com" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(tabMessages).toHaveLength(1);
-    // The mocked content-script channel fails, so the defined selection fallback runs.
+    // The mocked content-script channel returns null, so the selection fallback runs.
     await pending;
     expect(scriptingCalls).toHaveLength(1);
   });
@@ -472,7 +707,7 @@ describe("background worker core", () => {
   it("hydrates capture-before-connect and pushes a later capture completion to a connected panel", async () => {
     const { core, chrome } = await loadWorker();
     await core.commitSession((sessions) => {
-      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, captureId: "c1", captureStatus: "preview", confirmed: false, revision: 4, updatedAt: 4 };
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, captureId: "c1", captureStatus: "preview", confirmed: false, revision: 4, updatedAt: 4, history: [] };
       return sessions.s1;
     });
     const first = panelPort({ id: "test-extension", url: "chrome-extension://test-extension/sidepanel.html" });
@@ -505,9 +740,8 @@ describe("background worker core", () => {
     });
     await core.pushSession(completed);
     expect(second.posts.at(-1)).toMatchObject({ type: "coach:update", session: { revision: 6, captureStatus: "preview" } });
-    second.onMessage.trigger({ type: "coach:confirm-capture", sessionId: "s1", captureId: "c1" });
-    await core.waitForSessionCommits();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const secondCtx = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(second, secondCtx, { type: "coach:confirm-capture", sessionId: "s1", captureId: "c1" });
     expect(second.posts.at(-1)).toMatchObject({ type: "coach:update", session: { confirmed: true, revision: 7 } });
   });
 
@@ -652,11 +886,23 @@ describe("background worker core", () => {
     expect(() => core.validateReply(JSON.stringify({ code: "const x = 1;" }), stored.stageIndex)).toThrow("too early");
   });
 
-  it("hasCaptureText treats any non-empty field as a capture, so an examples-only result is kept", async () => {
+  it("hasCaptureText requires 40+ total chars, 20+ body chars, and 20+ description chars", async () => {
     const { core } = await loadWorker();
-    expect(core.hasCaptureText({ title: "", description: "", examples: "Example 1: ...", constraints: "" })).toBe(true);
     expect(core.hasCaptureText({ title: "", description: "", examples: "", constraints: "" })).toBe(false);
     expect(core.hasCaptureText(null)).toBe(false);
+    expect(core.hasCaptureText({ title: "", description: "Description", examples: "", constraints: "" })).toBe(false);
+    expect(core.hasCaptureText({ title: "Two Sum", description: "Description", examples: "Examples", constraints: "Constraints" })).toBe(false);
+    expect(core.hasCaptureText({ title: "Two Sum", description: "Given an array of integers, return indices.", examples: "Example 1: [2,7,11,15], target = 9", constraints: "1 <= n <= 100" })).toBe(true);
+  });
+
+  it("rejects description text where Follow-up heading inflates the count, preventing heading-only capture acceptance", async () => {
+    const { core } = await loadWorker();
+    // Description-only with Follow-up heading stripped by meaningfulDescription
+    expect(core.hasCaptureText({ title: "", description: "Description\nFollow-up", examples: "", constraints: "" })).toBe(false);
+    // Follow-up alone inflates heading-only text above 20 chars in the raw description
+    expect(core.hasCaptureText({ title: "Two Sum", description: "Description\nFollow-up", examples: "Examples", constraints: "Constraints" })).toBe(false);
+    // Real description text before Follow-up is still meaningful
+    expect(core.hasCaptureText({ title: "Two Sum", description: "Given an array of integers, return indices of the two numbers that add up to target.\n\nFollow-up\nCan you do it without extra space?", examples: "Example 1: [2,7,11,15], target = 9", constraints: "1 <= n <= 100" })).toBe(true);
   });
 
   it("readEditorCode refuses to read on a non-LeetCode session even when asked to", async () => {
@@ -804,5 +1050,143 @@ describe("background worker core", () => {
     expect(clipped.examples.length).toBeLessThan(500);
     expect(clipped.constraints).toBe("");
     expect(clipped.truncated).toBe(true);
+  });
+
+  it("hasCaptureText requires 40+ total characters and 20+ body characters to prevent title-only or skeleton captures", async () => {
+    const { core } = await loadWorker();
+    expect(core.hasCaptureText({ title: "Short" })).toBe(false);
+    expect(core.hasCaptureText({ title: "A".repeat(39) })).toBe(false);
+    expect(core.hasCaptureText({ title: "A".repeat(40) })).toBe(false);
+    expect(core.hasCaptureText({ title: "", description: "A".repeat(40) })).toBe(true);
+    expect(core.hasCaptureText({ title: "Two Sum", description: "Given an array of integers, return indices", examples: "", constraints: "" })).toBe(true);
+    expect(core.hasCaptureText({ title: "", description: "", examples: "", constraints: "" })).toBe(false);
+    expect(core.hasCaptureText(null)).toBe(false);
+    expect(core.hasCaptureText({ title: "A".repeat(35), description: "A".repeat(5) })).toBe(false);
+    expect(core.hasCaptureText({ title: "A".repeat(30), description: "", examples: "Example 1: " })).toBe(false);
+    expect(core.hasCaptureText({ title: "A".repeat(20), description: "A".repeat(20) })).toBe(true);
+    expect(core.hasCaptureText({ title: "", description: "", examples: "Example 1: long enough problem text here with real content" })).toBe(false);
+  });
+
+  it("coach:rescan-capture generates a new captureId, marks capturing in flight, and rolls back on failure", async () => {
+    const { core, actionCalls, context } = await loadWorker({ captureResponse: null });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", captureId: "original-cid", capture: { title: "Two Sum", description: "A".repeat(40) }, captureStatus: "preview", confirmed: true, stageIndex: 0, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    const posts = [];
+    const port = { postMessage(m) { posts.push(m); }, disconnect() {} };
+    const panelContext = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(port, panelContext, { type: "coach:rescan-capture", sessionId: "s1" });
+    const mid = (await core.readSessions()).s1;
+    expect(mid.captureId).not.toBe("original-cid");
+    expect(mid.captureStatus).toBe("capturing");
+    expect(mid.capture).toBeNull();
+    await core.waitForSessionCommits();
+    const stored = (await core.readSessions()).s1;
+    expect(stored).toBeDefined();
+  });
+
+  it("coach:reset on a LeetCode page auto-confirms the fresh capture and delivers the first-stage kickoff", async () => {
+    const tabs = [{ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/", active: true }];
+    const { core, chrome } = await loadWorker({ tabs, selection: "Given an array of integers nums and an integer target, return indices of the two numbers that add up to target.", captureResponse: { title: "Two Sum", description: "A".repeat(40), sourceUrl: "https://leetcode.com/problems/two-sum/" } });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", captureId: "old-cid", capture: { title: "Old", description: "Old problem" }, captureStatus: "preview", confirmed: true, stageIndex: 2, history: [{ role: "coach", discussion: "old kickoff", at: 100 }], interviewerHistory: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1, stageKickoffsSent: ["restate", "clarify"] };
+      return sessions.s1;
+    });
+    const posts = [];
+    const port = { postMessage(m) { posts.push(m); }, disconnect() {} };
+    const panelContext = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(port, panelContext, { type: "coach:reset", sessionId: "s1" });
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await core.waitForSessionCommits();
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    const sessions = await core.readSessions();
+    const oldSession = Object.values(sessions).find((s) => s.id === "s1");
+    expect(oldSession).toBeUndefined();
+    const newSessions = Object.values(sessions).filter((s) => s.tabId === 1);
+    expect(newSessions).toHaveLength(1);
+    const fresh = newSessions[0];
+    expect(fresh.confirmed).toBe(true);
+    expect(fresh.stageIndex).toBe(0);
+    expect(fresh.history.some((msg) => msg.discussion && msg.discussion.includes("restating"))).toBe(true);
+  });
+
+  it("persists stageKickoffsSent through loadSessionByUrl so upgraded sessions do not duplicate kickoffs", async () => {
+    const { core, storage } = await loadWorker();
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", captureId: "c1", capture: { title: "Two Sum", description: "A".repeat(40) }, captureStatus: "preview", confirmed: true, stageIndex: 0, history: [], epoch: 0, pendingRequest: null, revision: 1, updatedAt: 1, stageKickoffsSent: ["restate"] };
+      return sessions.s1;
+    });
+    const url = "https://leetcode.com/problems/two-sum/";
+    const sessions1 = (await core.readSessions()).s1;
+    const persisted = core.publicSession(sessions1);
+    await core.persistSessionByUrl(url, persisted);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const loaded = await core.loadSessionByUrl(url);
+    expect(loaded.stageKickoffsSent).toEqual(["restate"]);
+  });
+
+  it("rejects overlapping Re-scan requests while already capturing", async () => {
+    const { core } = await loadWorker();
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", captureId: "cid", capture: { title: "Two Sum" }, captureStatus: "capturing", confirmed: false, stageIndex: 0, history: [], epoch: 0, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    const posts = [];
+    const port = { postMessage(m) { posts.push(m); }, disconnect() {} };
+    await core.handlePanelMessage(port, { windowId: 1, currentSessionId: "s1" }, { type: "coach:rescan-capture", sessionId: "s1" });
+    expect(posts).toContainEqual({ type: "coach:error", error: "A re-scan is already in progress." });
+  });
+
+  it("re-scan with non-meaningful result rolls back to prior capture and reports error", async () => {
+    const { core } = await loadWorker({ tabs: [{ id: 1, windowId: 1, url: "https://example.test/other" }], selection: "" });
+    await core.commitSession((sessions) => {
+      sessions.s1 = { id: "s1", tabId: 1, windowId: 1, origin: "https://example.test", url: "https://example.test/other", captureId: "cid", capture: { title: "Original", description: "A".repeat(40) }, captureStatus: "preview", confirmed: false, stageIndex: 0, history: [], epoch: 0, revision: 1, updatedAt: 1 };
+      return sessions.s1;
+    });
+    const posts = [];
+    const port = { postMessage(m) { posts.push(m); }, disconnect() {} };
+    const context = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(port, context, { type: "coach:rescan-capture", sessionId: "s1" });
+    for (let i = 0; i < 30; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await core.waitForSessionCommits();
+    for (let i = 0; i < 30; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await core.waitForSessionCommits();
+    for (let i = 0; i < 30; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    const stored = (await core.readSessions()).s1;
+    expect(stored.capture).toEqual({ title: "Original", description: "A".repeat(40) });
+    expect(stored.captureStatus).toBe("preview");
+    expect(stored.error).toContain("Re-scan did not find meaningful content");
+  });
+
+  it("rehydrateSessions seeds stageKickoffsSent from stageIndex for legacy confirmed sessions", async () => {
+    const seed = { local: {}, session: { "dsaCoach.sessions": { s1: { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, confirmed: true, stageIndex: 3, history: [], epoch: 0, revision: 1, updatedAt: 1 } } } };
+    const { core } = await loadWorker({ seed });
+    const stored = (await core.readSessions()).s1;
+    expect(stored.stageKickoffsSent).toEqual(["restate", "clarify", "examples", "brute-force"]);
+  });
+
+  it("does not seed stageKickoffsSent for unconfirmed sessions during rehydration, so confirmation can still deliver initial guidance", async () => {
+    const seed = { local: {}, session: { "dsaCoach.sessions": { s1: { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", capture: { title: "Two Sum" }, confirmed: false, stageIndex: 0, history: [], epoch: 0, revision: 1, updatedAt: 1 } } } };
+    const { core } = await loadWorker({ seed });
+    const stored = (await core.readSessions()).s1;
+    expect(stored.stageKickoffsSent).toEqual([]);
+    expect(stored.confirmed).toBe(false);
+  });
+
+  it("delivers stage-0 kickoff when an unconfirmed session from rehydration is confirmed", async () => {
+    const seed = { local: {}, session: { "dsaCoach.sessions": { s1: { id: "s1", tabId: 1, windowId: 1, origin: "https://leetcode.com", url: "https://leetcode.com/problems/two-sum/", capture: { title: "Two Sum", description: "Given an array", examples: "Ex1", constraints: "1<=n" }, captureId: "c1", captureStatus: "preview", confirmed: false, stageIndex: 0, history: [], epoch: 0, revision: 1, updatedAt: 1 } } } };
+    const { core } = await loadWorker({ seed });
+    const port = { postMessage() {}, disconnect() {} };
+    const context = { windowId: 1, currentSessionId: "s1" };
+    await core.handlePanelMessage(port, context, { type: "coach:confirm-capture", sessionId: "s1", captureId: "c1" });
+    const stored = (await core.readSessions()).s1;
+    expect(stored.confirmed).toBe(true);
+    expect(stored.stageKickoffsSent).toEqual(["restate"]);
+    expect(stored.history).toHaveLength(1);
+    expect(stored.history[0].role).toBe("coach");
+    expect(stored.history[0].discussion).toBeTruthy();
   });
 });

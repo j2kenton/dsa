@@ -8,6 +8,7 @@ const TOMBSTONE_KEY = "dsaCoach.credTombstone";
 const HEALTH_KEY = "dsaCoach.areaHealth";
 const PROBE_KEY = "dsaCoach.healthProbe";
 const MAX_CAPTURE = 8000;
+const MIN_MEANINGFUL_CAPTURE_CHARS = 40;
 const MAX_EDITOR_CODE = 4000;
 const MAX_TURNS = 40;
 const MAX_HISTORY_BYTES = 128 * 1024;
@@ -16,8 +17,8 @@ const PERSISTENT_SESSION_KEY = "dsaCoach.sessionsByUrl";
 const MISMATCH_MESSAGE = "This conversation belongs to another page. Continue anyway to reuse its original problem text, or start a new capture.";
 const STAGES = [
   { id: "restate", label: "Read & restate", fields: ["question", "discussion", "hint"],
-    objective: "Help you read through the problem carefully, restate it in your own words, make notes in the LeetCode editor, and confirm your understanding with the interviewer before moving on.",
-    userPrompt: "Read through the problem carefully. Restate it in your own words and make notes in the LeetCode editor. When you're ready, confirm your understanding with the interviewer.",
+    objective: "Help you read through the problem carefully, restate it in your own words, make notes in your editor, and confirm your understanding with the interviewer before moving on.",
+    userPrompt: "Read through the problem carefully. Restate it in your own words and make notes in your editor. When you're ready, confirm your understanding with the interviewer.",
     placeholder: "" },
   { id: "clarify", label: "Clarify", fields: ["question", "discussion", "hint"],
     objective: "Help you ask clarifying questions about the problem's input, output, and constraints before you commit to any approach. Remind you to check the examples first — if the answer is already obvious from them, state your assumption aloud to the interviewer rather than asking. Do not suggest an approach, pattern, or data structure yet.",
@@ -40,12 +41,12 @@ const STAGES = [
     userPrompt: "What edge cases could break your approach? Think about empty input, single elements, duplicates, and boundaries.",
     placeholder: "" },
   { id: "pseudocode", label: "Pseudocode", fields: ["question", "discussion", "hint", "pseudocode"],
-    objective: "Help you turn your approach into step-by-step pseudocode. You should write it in the LeetCode editor; discuss specific steps here rather than having the coach write it for you.",
-    userPrompt: "Write your pseudocode in the LeetCode editor, then ask about a specific step here.",
+    objective: "Help you turn your approach into step-by-step pseudocode. You should write it in your editor; discuss specific steps here rather than having the coach write it for you.",
+    userPrompt: "Write your pseudocode in your editor, then ask about a specific step here.",
     placeholder: "" },
   { id: "code", label: "Code", fields: ["question", "discussion", "hint", "pseudocode", "code"],
-    objective: "Help you finish and debug real code. You should write it in the LeetCode editor. If you ask what the coach thinks of your code, read your actual editor contents (attached via the \"Attach my editor code\" checkbox) and critique that — never substitute the coach's own pseudocode or code for an answer.",
-    userPrompt: "Write your code in the LeetCode editor, then ask what you'd like feedback on.",
+    objective: "Help you finish and debug real code. You should write it in your editor. If you ask what the coach thinks of your code, read your actual editor contents (attached via the \"Attach my editor code\" checkbox) and critique that — never substitute the coach's own pseudocode or code for an answer.",
+    userPrompt: "Write your code in your editor, then ask what you'd like feedback on.",
     placeholder: "" },
 ];
 const STAGE_KICKOFF_LINES = {
@@ -55,8 +56,8 @@ const STAGE_KICKOFF_LINES = {
   "brute-force": "Good, you've got a solid understanding. Now let's think about the simplest possible approach — a brute force. What's the most straightforward way you could solve this, even if it's slow?",
   optimize: "Nice — you've got a working brute force. Now let's look for where it's doing unnecessary or repeated work. What's the bottleneck?",
   "edge-cases": "Before you start coding, let's think about edge cases. What inputs could break your approach? Think about empty input, single elements, very large or very small values, duplicates.",
-  pseudocode: "Let's turn your approach into step-by-step pseudocode. Write it in the LeetCode editor and we can discuss specific steps here.",
-  code: "Time to write real code. Write your implementation in the LeetCode editor, and ask me about anything you're unsure of.",
+  pseudocode: "Let's turn your approach into step-by-step pseudocode. Write it in your editor and we can discuss specific steps here.",
+  code: "Time to write real code. Write your implementation in your editor, and ask me about anything you're unsure of.",
 };
 const STAGE_FIELDS = STAGES.map((stage) => stage.fields);
 function clampStage(index) { return Math.min(Math.max(Number(index) || 0, 0), STAGES.length - 1); }
@@ -279,8 +280,20 @@ function capHistory(session) {
   while (session.history.length > MAX_TURNS || historyBytes(session.history) > MAX_HISTORY_BYTES) { session.history.shift(); dropped = true; }
   if (dropped) session.historyNotice = "Older conversation turns were dropped to keep this session within its privacy and storage limit.";
 }
+function totalCaptureChars(capture) {
+  return (capture?.title || "").length + (capture?.description || "").length + (capture?.examples || "").length + (capture?.constraints || "").length;
+}
+function meaningfulDescription(description) {
+  // Strip Follow-up section heading it is not part of the core problem text.
+  return (description || "").replace(/\s*Follow-up[\s\S]*$/i, "").trim();
+}
 function hasCaptureText(capture) {
-  return Boolean(capture && (capture.title || capture.description || capture.examples || capture.constraints));
+  if (!capture) return false;
+  if (totalCaptureChars(capture) < MIN_MEANINGFUL_CAPTURE_CHARS) return false;
+  const bodyLen = (capture.description || "").length + (capture.examples || "").length + (capture.constraints || "").length;
+  if (bodyLen < 20) return false;
+  if (meaningfulDescription(capture.description).length < 20) return false;
+  return true;
 }
 function publicSession(session) {
   if (!session) return null;
@@ -350,6 +363,10 @@ async function rehydrateSessions() {
       }
       const clamped = clampStage(session.stageIndex);
       if (clamped !== session.stageIndex) { session.stageIndex = clamped; touch(session); }
+      if (!session.stageKickoffsSent) session.stageKickoffsSent = [];
+      if (session.stageKickoffsSent.length === 0 && session.confirmed) {
+        for (let i = 0; i <= clamped; i++) { const sid = STAGES[i].id; if (!session.stageKickoffsSent.includes(sid)) session.stageKickoffsSent.push(sid); }
+      }
     }
     return null;
   });
@@ -392,6 +409,11 @@ async function removeSessionByUrl(url) {
 }
 async function activeTabFor(windowId) { const tabs = await chrome.tabs.query({ active: true, windowId }); return tabs[0] || null; }
 
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Timed out")), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 function clipCapture(capture) {
   const fields = ["title", "description", "examples", "constraints"];
   let remaining = MAX_CAPTURE; const clipped = {};
@@ -401,10 +423,14 @@ function clipCapture(capture) {
 function requestLeetCodeCapture(session) {
   const requestId = crypto.randomUUID();
   return new Promise(async (resolve, reject) => {
-    const timer = setTimeout(() => { captureRequests.delete(requestId); reject(new Error("Timed out waiting for page capture.")); }, 3500);
+    const deadline = Date.now() + 10000;
+    const timer = setTimeout(() => { captureRequests.delete(requestId); reject(new Error("Timed out waiting for page capture.")); }, 10000);
     captureRequests.set(requestId, { tabId: session.tabId, frameId: 0, origin: session.origin, resolve: (capture) => { clearTimeout(timer); resolve(capture); } });
-    try { await chrome.tabs.sendMessage(session.tabId, { type: "capture:leetcode", requestId }); }
-    catch (error) { clearTimeout(timer); captureRequests.delete(requestId); reject(error); }
+    while (Date.now() < deadline) {
+      try { await chrome.tabs.sendMessage(session.tabId, { type: "capture:leetcode", requestId }); return; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 200)); }
+    }
+    clearTimeout(timer); captureRequests.delete(requestId); reject(new Error("Timed out waiting for page capture."));
   });
 }
 function requestEditorCode(session) {
@@ -425,22 +451,94 @@ async function readEditorCode(session) {
 }
 async function captureFor(session) {
   let capture = null;
+  const deadline = Date.now() + 10000;
   if (/^https:\/\/leetcode\.com\/problems\//.test(session.url)) {
-    try { capture = await requestLeetCodeCapture(session); } catch { /* Selection remains an intentional fallback. */ }
+    const remaining = Math.max(0, deadline - Date.now());
+    if (remaining > 0) {
+      try { capture = await withTimeout(requestLeetCodeCapture(session), remaining); } catch { /* Selection remains an intentional fallback. */ }
+    }
   }
   if (!hasCaptureText(capture)) {
-    const [result] = await chrome.scripting.executeScript({ target: { tabId: session.tabId }, func: () => ({ selected: String(getSelection()), sourceUrl: location.href }) });
-    const selected = result?.result?.selected || "";
-    // An empty selection is not a capture. Keeping a synthetic title here made
-    // the panel present an empty preview that users could accidentally confirm.
-    capture = { title: selected ? "Selected problem text" : "", description: selected, sourceUrl: result?.result?.sourceUrl || session.url };
+    const remaining = Math.max(0, deadline - Date.now());
+    if (remaining > 0) {
+      try {
+        const [result] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: session.tabId }, func: () => ({ selected: String(getSelection()), sourceUrl: location.href }) }), remaining);
+        const selected = result?.result?.selected || "";
+        capture = { title: selected ? "Selected problem text" : "", description: selected, sourceUrl: result?.result?.sourceUrl || session.url };
+      } catch {}
+    }
   }
   return clipCapture(capture || {});
+}
+function isRestrictedProtocol(urlString) {
+  if (!urlString) return false;
+  try {
+    const protocol = new URL(urlString).protocol;
+    return protocol === "chrome:" || protocol === "about:" || protocol === "data:" || protocol === "chrome-extension:";
+  } catch {
+    return true;
+  }
+}
+
+const KNOWN_DISABLED_SIGNATURES = [
+  "side panel is not enabled for this tab",
+];
+const KNOWN_ACCESS_DENIED_SIGNATURES = [
+  "cannot access this page",
+  "access denied",
+];
+
+async function ensurePanelOpen(tab, { gesture = true } = {}) {
+  if (!tab?.id) return;
+  if (gesture) {
+    try {
+      await chrome.sidePanel.open({ tabId: tab.id });
+    } catch (openError) {
+      const openMessage = String(openError?.message || openError || "");
+      const openLower = openMessage.toLowerCase();
+      const knownDisabled = KNOWN_DISABLED_SIGNATURES.some((sig) => openLower === sig);
+      const knownAccessDenied = KNOWN_ACCESS_DENIED_SIGNATURES.some((sig) => openLower === sig);
+
+      let options = null;
+      try {
+        options = await chrome.sidePanel.getOptions({ tabId: tab.id });
+      } catch {
+        options = null;
+      }
+
+      if (knownDisabled && options !== null && options.enabled === false) {
+        try {
+          await chrome.sidePanel.setOptions({ tabId: tab.id, path: "sidepanel.html", enabled: true });
+          badgeError("Coach is ready for this tab — click the icon again to open it.", tab.id);
+        } catch (setError) {
+          const setLower = String(setError?.message || setError || "").toLowerCase();
+          if (KNOWN_ACCESS_DENIED_SIGNATURES.some((sig) => setLower === sig)) {
+            badgeError("Chrome could not open the coaching panel for this page. Has access to this site?", tab.id);
+          } else {
+            badgeError("Could not open the coaching panel for this page.", tab.id);
+          }
+        }
+        return;
+      }
+
+      if (isRestrictedProtocol(tab.url) || knownAccessDenied) {
+        badgeError("Chrome could not open the coaching panel for this page. Has access to this site?", tab.id);
+        return;
+      }
+
+      console.warn("[coach] Unexpected sidePanel.open() failure:", openMessage, "(tab:", tab.id, tab.url, ")");
+      badgeError("Could not open the coaching panel for this page.", tab.id);
+    }
+  } else {
+    try {
+      await chrome.sidePanel.setOptions({ tabId: tab.id, path: "sidepanel.html", enabled: true });
+    } catch {}
+  }
 }
 function launchCoach(tab) {
   if (!tab?.id) { badgeError("No active tab to coach."); return; }
   const captureId = crypto.randomUUID();
-  chrome.sidePanel.open({ tabId: tab.id }).catch(() => badgeError("Chrome could not open the coaching panel for this page.", tab.id));
+  void ensurePanelOpen(tab);
   void (async () => {
     await sessionReady;
     const existing = await loadSessionByUrl(tab.url || "");
@@ -451,7 +549,11 @@ function launchCoach(tab) {
           if (s.url && normalizeUrl(s.url) === normalized) delete sessions[sid];
         }
         const id = crypto.randomUUID();
-        const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: existing.capture || null, captureStatus: "preview", confirmed: true, mismatchAck: null, stageIndex: existing.stageIndex || 0, history: existing.history || [], interviewerHistory: existing.interviewerHistory || [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now() };
+        let stageKickoffsSent = existing.stageKickoffsSent || [];
+        if (stageKickoffsSent.length === 0) {
+          for (let i = 0; i <= clampStage(existing.stageIndex || 0); i++) { const sid = STAGES[i].id; if (!stageKickoffsSent.includes(sid)) stageKickoffsSent.push(sid); }
+        }
+        const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: existing.capture || null, captureStatus: "preview", confirmed: true, mismatchAck: null, stageIndex: existing.stageIndex || 0, history: existing.history || [], interviewerHistory: existing.interviewerHistory || [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now(), stageKickoffsSent };
         sessions[id] = record; return record;
       });
       await pushSession(session);
@@ -459,7 +561,7 @@ function launchCoach(tab) {
     }
     const session = await commitSession((sessions) => {
       const id = crypto.randomUUID();
-      const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: null, captureStatus: "capturing", confirmed: false, mismatchAck: null, stageIndex: 0, history: [], interviewerHistory: [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now() };
+      const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId, capture: null, captureStatus: "capturing", confirmed: false, mismatchAck: null, stageIndex: 0, history: [], interviewerHistory: [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now(), stageKickoffsSent: [] };
       sessions[id] = record; return record;
     });
     await pushSession(session);
@@ -501,14 +603,14 @@ function promptFor(session, userText, reminder = "", editorCode = "", codeReques
   const codeGuidance = !codeRequested
     ? ` If asked what you think of the user's code, say plainly that you cannot see it and ask them to tick "Attach my editor code" and resend — never invent or substitute your own pseudocode or code for an answer.`
     : !editorCode
-    ? ` The user ticked "Attach my editor code" for this message, but nothing could be read from it (the editor may be empty, or the read failed) — do not ask them to tick it again. If asked what you think of their code, say plainly that no code came through this time and ask them to make sure the LeetCode editor has code in it and resend — never invent or substitute your own pseudocode or code for an answer.`
+    ? ` The user ticked "Attach my editor code" for this message, but nothing could be read from it (the editor may be empty, or the read failed) — do not ask them to tick it again. If asked what you think of their code, say plainly that no code came through this time and ask them to make sure the editor has code in it and resend — never invent or substitute your own pseudocode or code for an answer.`
     : "";
   const messages = [
     { role: "system", content: `${COACH_PERSONA} Current stage: ${stage.id} — ${stage.objective} Return JSON only with question, discussion, hint, pseudocode, code, matchedPatternId. Only these fields may be non-empty: ${allowed}. Do not put source code in question, discussion, or hint. Ask the user to reason before revealing help.${codeGuidance}${nudge} ${reminder}\nCoaching knowledge: ${JSON.stringify(COACHING_KNOWLEDGE)}` },
     { role: "user", content: `Confirmed problem:\n${JSON.stringify(session.capture)}` },
     ...history,
   ];
-  if (editorCode) messages.push({ role: "user", content: `The user's current LeetCode editor contents, attached because they asked. This is a best-effort read of the editor's rendered DOM: for a long file it may include only the lines currently scrolled into view, not the whole file. If the code looks like it might be cut off (e.g. it doesn't start at the function signature, or trails off mid-statement), say so and ask the user to scroll and resend rather than assuming you're seeing everything:\n${editorCode}` });
+  if (editorCode) messages.push({ role: "user", content: `The user's current editor contents, attached because they asked. This is a best-effort read of the rendered DOM: for a long file it may include only the lines currently scrolled into view, not the whole file. If the code looks like it might be cut off (e.g. it doesn't start at the function signature, or trails off mid-statement), say so and ask the user to scroll and resend rather than assuming you're seeing everything:\n${editorCode}` });
   messages.push({ role: "user", content: `User message: ${userText}` });
   return messages;
 }
@@ -558,10 +660,10 @@ async function safeCoachReply(session, text, editorCode = "", codeRequested = fa
   // commits for this or another coaching session.
   const credential = await activeCredential();
   if (!credential) throw new Error("Configure an OpenAI API key in extension settings first.");
-  let raw = await providerChat(credential.provider, promptFor(session, text, "", editorCode, codeRequested), { apiKey: credential.key });
+  let raw = await providerChat(credential.provider, promptFor(session, text, "", editorCode, codeRequested), { apiKey: credential.key, jsonMode: true });
   try { return validateReply(raw, session.stageIndex); }
   catch {
-    raw = await providerChat(credential.provider, promptFor(session, text, "Your last reply violated the stage contract. Return valid JSON with only permitted fields and no code-like prose.", editorCode, codeRequested), { apiKey: credential.key });
+      raw = await providerChat(credential.provider, promptFor(session, text, "Your last reply violated the stage contract. Return valid JSON with only permitted fields and no code-like prose.", editorCode, codeRequested), { apiKey: credential.key, jsonMode: true });
     try { return validateReply(raw, session.stageIndex); }
     catch { const partial = validatedFieldsOnly(raw, session.stageIndex); if (partial) return partial; throw new Error("The provider response could not be displayed safely. Try again."); }
   }
@@ -656,7 +758,17 @@ async function handlePanelMessage(port, context, message) {
   if (mismatch) return port.postMessage({ type: "coach:mismatch", sessionId: session.id, currentTabId: tab.id, message: MISMATCH_MESSAGE });
   if (message.type === "coach:confirm-capture") {
     if (message.captureId !== session.captureId || session.captureStatus !== "preview") return port.postMessage({ type: "coach:error", error: "That capture is no longer available. Start a new session." });
-    const updated = await commitSession((sessions) => { const current = sessions[session.id]; if (!current || current.captureId !== message.captureId) return null; current.confirmed = true; touch(current); return current; });
+    const updated = await commitSession((sessions) => {
+      const current = sessions[session.id]; if (!current || current.captureId !== message.captureId) return null;
+      current.confirmed = true;
+      if (!current.stageKickoffsSent) current.stageKickoffsSent = [];
+      const firstStage = STAGES[0];
+      if (!current.stageKickoffsSent.includes(firstStage.id)) {
+        current.stageKickoffsSent.push(firstStage.id);
+        current.history.push({ role: "coach", discussion: STAGE_KICKOFF_LINES[firstStage.id], at: now() });
+      }
+      touch(current); return current;
+    });
     return pushSession(updated);
   }
   if (message.type === "coach:advance") {
@@ -665,8 +777,12 @@ async function handlePanelMessage(port, context, message) {
       const current = sessions[session.id]; if (!current) return null;
       current.stageIndex = clampStage(current.stageIndex + 1);
       const newStage = stageFor(current.stageIndex);
-      const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Welcome to the ${newStage.label} stage. What would you like to discuss?`;
-      current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      if (!current.stageKickoffsSent) current.stageKickoffsSent = [];
+      if (!current.stageKickoffsSent.includes(newStage.id)) {
+        current.stageKickoffsSent.push(newStage.id);
+        const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Welcome to the ${newStage.label} stage. What would you like to discuss?`;
+        current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      }
       capHistory(current); touch(current); return current;
     });
     return pushSession(updated);
@@ -677,11 +793,56 @@ async function handlePanelMessage(port, context, message) {
       const current = sessions[session.id]; if (!current) return null;
       current.stageIndex = clampStage(current.stageIndex - 1);
       const newStage = stageFor(current.stageIndex);
-      const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Back to the ${newStage.label} stage. What would you like to revisit?`;
-      current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      if (!current.stageKickoffsSent) current.stageKickoffsSent = [];
+      if (!current.stageKickoffsSent.includes(newStage.id)) {
+        current.stageKickoffsSent.push(newStage.id);
+        const kickoff = STAGE_KICKOFF_LINES[newStage.id] || `Back to the ${newStage.label} stage. What would you like to revisit?`;
+        current.history.push({ role: "coach", discussion: kickoff, at: now() });
+      }
       capHistory(current); touch(current); return current;
     });
     return pushSession(updated);
+  }
+  if (message.type === "coach:rescan-capture") {
+    if (session.captureStatus === "capturing") return port.postMessage({ type: "coach:error", error: "A re-scan is already in progress." });
+    const rescanCaptureId = crypto.randomUUID();
+    const priorCapture = session.capture;
+    const priorStatus = session.captureStatus;
+    const updated = await commitSession((sessions) => {
+      const current = sessions[session.id];
+      if (!current || current.captureId !== session.captureId) return null;
+      current.captureId = rescanCaptureId; current.captureStatus = "capturing"; current.capture = null; current.error = ""; touch(current); return current;
+    });
+    if (!updated) return;
+    await pushSession(updated);
+    void (async () => {
+      try {
+        const capture = await captureFor(session);
+        if (hasCaptureText(capture)) {
+          const result = await commitSession((sessions) => {
+            const current = sessions[session.id];
+            if (!current || current.captureId !== rescanCaptureId) return null;
+            current.capture = capture; current.captureStatus = "preview"; current.error = ""; touch(current); return current;
+          });
+          await pushSession(result);
+        } else {
+          const result = await commitSession((sessions) => {
+            const current = sessions[session.id];
+            if (!current || current.captureId !== rescanCaptureId) return null;
+            current.capture = priorCapture; current.captureStatus = priorStatus; current.error = "Re-scan did not find meaningful content. Restored the prior capture."; touch(current); return current;
+          });
+          await pushSession(result);
+        }
+      } catch {
+        const result = await commitSession((sessions) => {
+          const current = sessions[session.id];
+          if (!current || current.captureId !== rescanCaptureId) return null;
+          current.capture = priorCapture; current.captureStatus = priorStatus; current.error = "Rescan failed. Restored prior capture."; touch(current); return current;
+        });
+        await pushSession(result);
+      }
+    })();
+    return;
   }
   if (message.type === "coach:update-capture") {
     if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the problem before editing." });
@@ -735,9 +896,57 @@ async function handlePanelMessage(port, context, message) {
   }
   if (message.type === "coach:reset") {
     const sessionUrl = session.url;
-    const updated = await commitSession((sessions) => { const current = sessions[session.id]; if (!current) return null; current.epoch++; delete sessions[session.id]; return null; });
+    const isLeetCode = /^https:\/\/leetcode\.com\/problems\//.test(sessionUrl || "");
+    await commitSession((sessions) => { const current = sessions[session.id]; if (!current) return null; current.epoch++; delete sessions[session.id]; return null; });
     if (sessionUrl) await removeSessionByUrl(sessionUrl);
-    context.currentSessionId = null; return sendPortState(port, context);
+    context.currentSessionId = null;
+    if (isLeetCode && tab?.id) {
+      void ensurePanelOpen(tab, { gesture: false });
+      void (async () => {
+        await sessionReady;
+        const newCaptureId = crypto.randomUUID();
+        const session = await commitSession((sessions) => {
+          const id = crypto.randomUUID();
+          const record = { id, tabId: tab.id, windowId: tab.windowId, origin: (() => { try { return new URL(tab.url || "").origin; } catch { return ""; } })(), url: tab.url || "", captureId: newCaptureId, capture: null, captureStatus: "capturing", confirmed: false, mismatchAck: null, stageIndex: 0, history: [], interviewerHistory: [], pendingRequest: null, epoch: 0, revision: 1, createdAt: now(), updatedAt: now(), stageKickoffsSent: [] };
+          sessions[id] = record; return record;
+        });
+        await pushSession(session);
+        try {
+          const capture = await captureFor(session);
+          if (hasCaptureText(capture)) {
+            const updated = await commitSession((sessions) => {
+              const current = sessions[session.id];
+              if (!current || current.captureId !== newCaptureId || current.epoch !== session.epoch) return null;
+              current.capture = clipCapture(capture); current.captureStatus = "preview"; current.confirmed = true;
+              current.captureId = crypto.randomUUID();
+              if (!current.stageKickoffsSent) current.stageKickoffsSent = [];
+              const firstStage = STAGES[0];
+              if (!current.stageKickoffsSent.includes(firstStage.id)) {
+                current.stageKickoffsSent.push(firstStage.id);
+                current.history.push({ role: "coach", discussion: STAGE_KICKOFF_LINES[firstStage.id], at: now() });
+              }
+              touch(current); return current;
+            });
+            await pushSession(updated);
+          } else {
+            const updated = await commitSession((sessions) => {
+              const current = sessions[session.id];
+              if (!current || current.captureId !== newCaptureId) return null;
+              current.capture = clipCapture(capture); current.captureStatus = "empty"; touch(current); return current;
+            });
+            await pushSession(updated);
+          }
+        } catch {
+          const updated = await commitSession((sessions) => {
+            const current = sessions[session.id]; if (!current || current.captureId !== newCaptureId) return null;
+            current.captureStatus = "error"; current.error = "Could not capture this page on reset."; touch(current); return current;
+          });
+          await pushSession(updated);
+        }
+      })();
+      return;
+    }
+    return sendPortState(port, context);
   }
   if (!session.confirmed) return port.postMessage({ type: "coach:error", error: "Confirm the captured problem text before sending it to a provider." });
   if (message.type === "coach:send") return beginProviderRequest(session.id, String(message.text || ""), false, Boolean(message.includeCode));
@@ -762,9 +971,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 chrome.tabs.onRemoved.addListener((tabId) => { void commitSession((sessions) => { for (const session of Object.values(sessions)) if (session.tabId === tabId || session.mismatchAck?.tabId === tabId) delete sessions[session.id]; }); });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // URL is a sensitive Tab property and may be absent after activeTab is
-  // revoked. A loading event is still enough to conservatively stop the panel
-  // from silently continuing a session against a potentially new page.
   if (changeInfo.status !== "loading" && !changeInfo.url) return;
   void (async () => {
     const changed = await commitSession((sessions) => {
@@ -790,7 +996,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
   })();
 });
-chrome.tabs.onActivated.addListener(({ windowId }) => { for (const [port, context] of panelPorts) if (context.windowId === windowId) void sendPortState(port, context); });
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  for (const [port, context] of panelPorts) if (context.windowId === windowId) void sendPortState(port, context);
+});
 chrome.windows.onFocusChanged.addListener((windowId) => { for (const [port, context] of panelPorts) if (context.windowId === windowId) void sendPortState(port, context); });
 
 chrome.runtime.onConnect.addListener((port) => {

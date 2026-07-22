@@ -16,7 +16,7 @@ describe("OpenAI provider adapter", () => {
   it("maps a chat request and response without putting the key in the body", async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"discussion":"Try a map."}' } }] }) });
     const { providerChat } = providerWith(fetch);
-    await expect(providerChat("openai", [{ role: "user", content: "help" }], { apiKey: "sk-secret" })).resolves.toContain("Try a map");
+    await expect(providerChat("openai", [{ role: "user", content: "help" }], { apiKey: "sk-secret", jsonMode: true })).resolves.toContain("Try a map");
     const [, request] = fetch.mock.calls[0];
     expect(request.headers.Authorization).toBe("Bearer sk-secret");
     expect(request.body).not.toContain("sk-secret");
@@ -32,6 +32,15 @@ describe("OpenAI provider adapter", () => {
     const fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: { message: "'messages' must contain the word 'json'." } }) });
     const { providerChat } = providerWith(fetch);
     await expect(providerChat("openai", [], { apiKey: "sk-secret" })).rejects.toThrow("must contain the word 'json'");
+  });
+
+  it("omitting jsonMode does not add response_format to the provider request body", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: "Sure, let's discuss." } }] }) });
+    const { providerChat } = providerWith(fetch);
+    await providerChat("openai", [{ role: "user", content: "What is the input range?" }], { apiKey: "sk-secret" });
+    const [, request] = fetch.mock.calls[0];
+    const sent = JSON.parse(request.body);
+    expect(sent.response_format).toBeUndefined();
   });
 
   it("sends a test prompt that satisfies the json_object response format", async () => {

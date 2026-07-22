@@ -59,6 +59,18 @@ describe("content script", () => {
     expect(capture.description).not.toContain("Input: [1,2]");
   });
 
+  it("strips Follow-up section from description so heading-only Follow-up content cannot inflate character counts", () => {
+    const { dom, listeners, outbound } = page('<div data-track-load="description_content"></div>');
+    const content = dom.window.document.querySelector("[data-track-load]");
+    Object.defineProperty(content, "innerText", {
+      value: "Given an array, return the widget count.\n\nFollow-up\nTry to solve it without extra space.",
+    });
+    listeners[0]({ type: "capture:leetcode", requestId: "capture-followup" }, {}, () => {});
+    const { capture } = outbound[0];
+    expect(capture.description).toBe("Given an array, return the widget count.");
+    expect(capture.description).not.toContain("Follow-up");
+  });
+
   it("reads the learner's Monaco editor contents ordered by each line's absolute top offset", () => {
     const { dom, listeners, outbound } = page(
       '<div class="monaco-editor"><div class="view-lines">' +
@@ -76,5 +88,24 @@ describe("content script", () => {
     const { dom, listeners, outbound } = page("<p>no editor here</p>");
     listeners[0]({ type: "editor:read", requestId: "editor-2" }, {}, () => {});
     expect(outbound).toEqual([{ type: "editor:result", requestId: "editor-2", code: "" }]);
+  });
+
+  it("waits for real content to replace Follow-up-only placeholder during the polling window", async () => {
+    const { dom, listeners, outbound } = page('<div data-track-load="description_content"></div>');
+    const content = dom.window.document.querySelector("[data-track-load]");
+
+    Object.defineProperty(content, "innerText", { configurable: true, writable: true, value: "Follow-up\nCould you solve it in linear time?" });
+
+    listeners[0]({ type: "capture:leetcode", requestId: "delayed-render" }, {}, () => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(outbound).toHaveLength(0);
+
+    Object.defineProperty(content, "innerText", { value: "Given an array of integers, return the indices of the two numbers.\n\nFollow-up\nCould you solve it in O(n)?" });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].capture.description).toBe("Given an array of integers, return the indices of the two numbers.");
   });
 });

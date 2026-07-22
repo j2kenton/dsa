@@ -3,10 +3,12 @@ const PROVIDERS = {
     label: "OpenAI",
     endpoint: "https://api.openai.com/v1/chat/completions",
     async chat(messages, options) {
+      const body = { model: options.model || "gpt-4o-mini", messages, temperature: 0.35 };
+      if (options.jsonMode) body.response_format = { type: "json_object" };
       const response = await fetch(this.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.apiKey}` },
-        body: JSON.stringify({ model: options.model || "gpt-4o-mini", messages, temperature: 0.35, response_format: { type: "json_object" } }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
         // Surface the provider's own message for statuses we do not map. A bare
@@ -22,14 +24,14 @@ const PROVIDERS = {
         error.status = response.status;
         throw error;
       }
-      const body = await response.json();
-      return body.choices?.[0]?.message?.content || "";
+      const result = await response.json();
+      return result.choices?.[0]?.message?.content || "";
     },
     async test(apiKey) {
       // chat() sets response_format json_object, which the API rejects with a
       // 400 unless the word "json" appears in the messages. Keep it in this
       // prompt verbatim.
-      await this.chat([{ role: "user", content: "Reply with the json object {\"ok\":true}." }], { apiKey });
+      await this.chat([{ role: "user", content: "Reply with the json object {\"ok\":true}." }], { apiKey, jsonMode: true });
     },
   },
 };
