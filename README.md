@@ -6,6 +6,8 @@
 
 ![Algo Coach screenshot](store-assets/screenshot-1.png)
 
+![Algo Coach screenshot](store-assets/screenshot-2.png)
+
 Algo Coach is a deliberately designed DSA learning experience for LeetCode. It combines a library of reusable JavaScript patterns with an AI coach that behaves more like a strong technical interviewer than an answer generator.
 
 The product is built around a simple principle: the learner should do the thinking. Algo Coach captures the problem, asks the next useful question, and reveals help progressively—from recognition and tradeoffs to hints, pseudocode, and finally code. The result is a reusable problem-solving habit, not just another copied solution.
