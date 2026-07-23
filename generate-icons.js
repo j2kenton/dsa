@@ -64,73 +64,94 @@ function encodePNG(width, height, pixels) {
 }
 
 // --- Icon renderer ---
-// Draws a dark rounded-square background with white "<>" brackets
+// Draws a dark rounded-square background with a graph "solved path": two plain
+// nodes connected to a highlighted node, tracing a checkmark-like path.
 
 function renderIcon(size) {
   const pixels = new Uint8Array(size * size * 4);
 
-  const BG = [30, 30, 46, 255];    // dark navy
-  const FG = [205, 214, 244, 255]; // soft white
+  const BG = [255, 255, 255, 255];  // white, checkbox-like
+  const ACCENT = [52, 168, 83, 255]; // solid green
+  const EDGE = [27, 94, 32, 255];    // dark green
+  const BORDER = [66, 66, 66, 255];  // dark gray
 
-  const radius = Math.round(size * 0.18);
+  function blend(px, py, color, a) {
+    if (px < 0 || py < 0 || px >= size || py >= size || a <= 0) return;
+    const idx = (py * size + px) * 4;
+    const bg_a = pixels[idx + 3] / 255;
+    const out_a = a + bg_a * (1 - a);
+    if (out_a === 0) return;
+    pixels[idx + 0] = Math.round((color[0] * a + pixels[idx + 0] * bg_a * (1 - a)) / out_a);
+    pixels[idx + 1] = Math.round((color[1] * a + pixels[idx + 1] * bg_a * (1 - a)) / out_a);
+    pixels[idx + 2] = Math.round((color[2] * a + pixels[idx + 2] * bg_a * (1 - a)) / out_a);
+    pixels[idx + 3] = Math.round(out_a * 255);
+  }
+
+  // Rounded-square background
+  const radius = Math.round(size * 0.2);
   const cx = size / 2;
   const cy = size / 2;
-
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) * 4;
-
-      // Rounded rectangle (anti-aliased via distance)
       const dx = Math.max(0, Math.abs(x - cx) - (size / 2 - radius - 0.5));
       const dy = Math.max(0, Math.abs(y - cy) - (size / 2 - radius - 0.5));
       const dist = Math.sqrt(dx * dx + dy * dy) - radius;
       const alpha = Math.max(0, Math.min(1, 0.5 - dist));
-
-      pixels[idx + 0] = BG[0];
-      pixels[idx + 1] = BG[1];
-      pixels[idx + 2] = BG[2];
-      pixels[idx + 3] = Math.round(alpha * 255);
+      blend(x, y, BG, alpha);
     }
   }
 
-  // Draw "<>" using thick strokes scaled to icon size
-  const stroke = Math.max(1, Math.round(size * 0.09));
-  const armLen = size * 0.22;
-  const spread = size * 0.17;
-  const leftX = cx - size * 0.18;
-  const rightX = cx + size * 0.18;
+  // Checkbox-style border, inset from the rounded-square edge
+  const borderStroke = Math.max(1, size * 0.045);
+  const borderInset = borderStroke * 0.7;
+  const borderRadius = radius - borderInset;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = Math.max(0, Math.abs(x - cx) - (size / 2 - radius - 0.5 - borderInset));
+      const dy = Math.max(0, Math.abs(y - cy) - (size / 2 - radius - 0.5 - borderInset));
+      const dist = Math.sqrt(dx * dx + dy * dy) - borderRadius;
+      const a = Math.max(0, Math.min(1, borderStroke / 2 - Math.abs(dist)));
+      blend(x, y, BORDER, a);
+    }
+  }
 
-  function drawLine(x0, y0, x1, y1) {
-    const steps = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 2);
+  function drawLine(x0, y0, x1, y1, stroke, color) {
+    const steps = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 2) + 1;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const lx = x0 + (x1 - x0) * t;
       const ly = y0 + (y1 - y0) * t;
       for (let py = Math.floor(ly - stroke); py <= Math.ceil(ly + stroke); py++) {
         for (let px = Math.floor(lx - stroke); px <= Math.ceil(lx + stroke); px++) {
-          if (px < 0 || py < 0 || px >= size || py >= size) continue;
           const d = Math.sqrt((px - lx) ** 2 + (py - ly) ** 2) - stroke / 2;
           const a = Math.max(0, Math.min(1, 0.5 - d));
-          if (a <= 0) continue;
-          const idx = (py * size + px) * 4;
-          const bg_a = pixels[idx + 3] / 255;
-          const out_a = a + bg_a * (1 - a);
-          if (out_a === 0) continue;
-          pixels[idx + 0] = Math.round((FG[0] * a + pixels[idx + 0] * bg_a * (1 - a)) / out_a);
-          pixels[idx + 1] = Math.round((FG[1] * a + pixels[idx + 1] * bg_a * (1 - a)) / out_a);
-          pixels[idx + 2] = Math.round((FG[2] * a + pixels[idx + 2] * bg_a * (1 - a)) / out_a);
-          pixels[idx + 3] = Math.round(out_a * 255);
+          blend(px, py, color, a);
         }
       }
     }
   }
 
-  // "<" left bracket
-  drawLine(leftX + armLen, cy - spread, leftX, cy);
-  drawLine(leftX, cy, leftX + armLen, cy + spread);
-  // ">" right bracket
-  drawLine(rightX - armLen, cy - spread, rightX, cy);
-  drawLine(rightX, cy, rightX - armLen, cy + spread);
+  function drawCircle(ccx, ccy, r, color) {
+    for (let py = Math.floor(ccy - r - 1); py <= Math.ceil(ccy + r + 1); py++) {
+      for (let px = Math.floor(ccx - r - 1); px <= Math.ceil(ccx + r + 1); px++) {
+        const d = Math.sqrt((px - ccx) ** 2 + (py - ccy) ** 2) - r;
+        const a = Math.max(0, Math.min(1, 0.5 - d));
+        blend(px, py, color, a);
+      }
+    }
+  }
+
+  const stroke = Math.max(1, size * 0.05);
+  const r = size * 0.1;
+  const p1 = [size * 0.28, size * 0.5];
+  const p2 = [size * 0.44, size * 0.68];
+  const p3 = [size * 0.74, size * 0.32];
+
+  drawLine(p1[0], p1[1], p2[0], p2[1], stroke, EDGE);
+  drawLine(p2[0], p2[1], p3[0], p3[1], stroke, EDGE);
+  drawCircle(p1[0], p1[1], r, ACCENT);
+  drawCircle(p2[0], p2[1], r, ACCENT);
+  drawCircle(p3[0], p3[1], r * 1.15, ACCENT);
 
   return encodePNG(size, size, pixels);
 }
