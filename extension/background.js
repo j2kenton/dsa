@@ -583,8 +583,9 @@ function launchCoach(tab) {
   })();
 }
 
-const COACH_PERSONA = "You are a calm, encouraging JavaScript DSA interview coach. Always address the user directly as 'you' — never say 'the learner'. Respond to what the user actually said: reference their specific words, acknowledge what they noticed, catch their mistakes (off-by-one errors, confusing concepts, wrong assumptions), and guide them in baby steps toward the next stage. Be specific and encouraging, not generic. When the user proposes something good, say so and explain why briefly, then nudge them to the next step. When the user makes a mistake, point it out gently with a concrete counter-example. Work through problems the way a strong interview candidate does: study the given examples together with the user and help them name the pattern, derive the most intuitive approach from that pattern, get a brute-force solution stated in plain language, and only then optimize it. When the user proposes a brute-force approach, affirm it as the correct place to start and ask them to state it precisely. Never spell out the iteration strategy or name the data structure yourself; ask a question that lets the user get there. Prefer modern JavaScript in any discussion, pseudocode, or code: refer to Map, Set, or Object.groupBy by name, and use current syntax.";
-const INTERVIEWER_PERSONA = "You are playing the role of a friendly but professional technical interviewer in a coding interview for a JavaScript position. Answer the candidate's clarifying questions directly and concisely, as a real interviewer would. Provide specific answers about input ranges, expected outputs, edge case handling, and constraints. Stay in character as the interviewer — do not coach, teach, or guide. Just answer questions about the problem specification. If the candidate asks something not specified in the problem, give a reasonable answer that a real interviewer would give. Always address the candidate as 'you'.";
+const NO_LATEX_INSTRUCTION = " Never use LaTeX or backslash-escaped math notation (no \\( \\), \\[ \\], \\frac, \\times, etc.) — write math in plain text, e.g. 'x^-n' or 'n is 0', not '\\( x^{-n} \\)'.";
+const COACH_PERSONA = "You are a calm, encouraging JavaScript DSA interview coach. Always address the user directly as 'you' — never say 'the learner'. Respond to what the user actually said: reference their specific words, acknowledge what they noticed, catch their mistakes (off-by-one errors, confusing concepts, wrong assumptions), and guide them in baby steps toward the next stage. Be specific and encouraging, not generic. When the user proposes something good, say so and explain why briefly, then nudge them to the next step. When the user makes a mistake, point it out gently with a concrete counter-example. Work through problems the way a strong interview candidate does: study the given examples together with the user and help them name the pattern, derive the most intuitive approach from that pattern, get a brute-force solution stated in plain language, and only then optimize it. When the user proposes a brute-force approach, affirm it as the correct place to start and ask them to state it precisely. Never spell out the iteration strategy or name the data structure yourself; ask a question that lets the user get there. Prefer modern JavaScript in any discussion, pseudocode, or code: refer to Map, Set, or Object.groupBy by name, and use current syntax." + NO_LATEX_INSTRUCTION;
+const INTERVIEWER_PERSONA = "You are playing the role of a friendly but professional technical interviewer in a coding interview for a JavaScript position. Answer the candidate's clarifying questions directly and concisely, as a real interviewer would. Provide specific answers about input ranges, expected outputs, edge case handling, and constraints. Stay in character as the interviewer — do not coach, teach, or guide. Just answer questions about the problem specification. If the candidate asks something not specified in the problem, give a reasonable answer that a real interviewer would give. Always address the candidate as 'you'." + NO_LATEX_INSTRUCTION;
 function promptFor(session, userText, reminder = "", editorCode = "", codeRequested = false) {
   const stage = stageFor(session.stageIndex);
   const allowed = stage.fields.join(", ");
@@ -628,6 +629,21 @@ function interviewerPromptFor(session, userText) {
     { role: "user", content: userText },
   ];
 }
+function stripLatex(value) {
+  if (!value) return value;
+  return value
+    .replace(/\\[()[\]]/g, "")
+    .replace(/\\times/g, "*")
+    .replace(/\\cdot/g, "*")
+    .replace(/\\le/g, "<=")
+    .replace(/\\ge/g, ">=")
+    .replace(/\\ne/g, "!=")
+    .replace(/\\infty/g, "infinity")
+    .replace(/\\dots|\\ldots/g, "...")
+    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1/$2")
+    .replace(/\^\{([^{}]*)\}/g, "^$1")
+    .replace(/_\{([^{}]*)\}/g, "_$1");
+}
 function containsCode(value) {
   return /```|^\s{4,}(?:if|for|while|return|const|let|function|class)\b|(?:^|\n)\s*(?:for|while|if)\s*\(|=>|\breturn\s+[^.\n]+;|[{}]\s*$/m.test(value || "");
 }
@@ -638,6 +654,7 @@ function validateReply(raw, stageIndex) {
     data[key] = typeof data[key] === "string" ? data[key] : "";
     if (!allowed.has(key) && data[key]) throw new Error(`The response revealed ${key} too early.`);
     if (key !== "pseudocode" && key !== "code" && data[key] && containsCode(data[key])) throw new Error("The response revealed code too early.");
+    if (key === "question" || key === "discussion" || key === "hint") data[key] = stripLatex(data[key]);
   }
   data.matchedPatternId = typeof data.matchedPatternId === "string" ? data.matchedPatternId : "";
   return data;
@@ -650,7 +667,7 @@ function validatedFieldsOnly(raw, stageIndex) {
   for (const field of ["question", "discussion", "hint", "pseudocode", "code"]) {
     const value = typeof data[field] === "string" ? data[field] : "";
     if (!value || !allowed.has(field) || ((field !== "pseudocode" && field !== "code") && containsCode(value))) continue;
-    clean[field] = value;
+    clean[field] = (field === "question" || field === "discussion" || field === "hint") ? stripLatex(value) : value;
   }
   return Object.keys(clean).some((key) => key !== "matchedPatternId") ? clean : null;
 }
@@ -869,7 +886,7 @@ async function handlePanelMessage(port, context, message) {
         const credential = await activeCredential();
         if (!credential) throw new Error("Configure an API key in extension settings first.");
         const raw = await providerChat(credential.provider, interviewerPromptFor(pending, text), { apiKey: credential.key });
-        const replyText = raw.trim();
+        const replyText = stripLatex(raw.trim());
         const updated = await commitSession((sessions) => {
           const current = sessions[session.id];
           if (!current || current.pendingInterviewerRequest?.requestId !== requestId) return null;
