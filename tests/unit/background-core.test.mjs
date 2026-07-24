@@ -337,6 +337,62 @@ describe("background worker core", () => {
     expect(actionCalls.filter(([type]) => type === "setOptions")).toHaveLength(1);
   });
 
+  it("icon click opens the panel and starts a session when no panel port is connected", async () => {
+    const { core, chrome, actionCalls } = await loadWorker();
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    chrome.action.onClicked.trigger({ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" });
+    await flushWork(core);
+    expect(actionCalls.filter(([type]) => type === "open")).toHaveLength(1);
+    expect(Object.values(await core.readSessions())).toHaveLength(1);
+  });
+
+  it("icon click closes an already-open panel in the same window instead of starting a new session", async () => {
+    const { core, chrome, actionCalls } = await loadWorker();
+    const port = panelPort({ id: "test-extension", url: "chrome-extension://test-extension/sidepanel.html" });
+    chrome.runtime.onConnect.trigger(port);
+    port.onMessage.trigger({ type: "coach:handshake", windowId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    chrome.action.onClicked.trigger({ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" });
+    await flushWork(core);
+    expect(port.posts).toContainEqual({ type: "coach:close-panel" });
+    expect(actionCalls.some(([type]) => type === "open")).toBe(false);
+    expect(Object.values(await core.readSessions())).toHaveLength(0);
+  });
+
+  it("icon click opens the panel when the only connected port is handshaken to a different window", async () => {
+    const tabs = [
+      { id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" },
+      { id: 2, windowId: 2, url: "https://leetcode.com/problems/two-sum/" },
+    ];
+    const { core, chrome, actionCalls } = await loadWorker({ tabs });
+    await core.setCredential({ apiKey: "session-key", persistent: false });
+    const port = panelPort({ id: "test-extension", url: "chrome-extension://test-extension/sidepanel.html" });
+    chrome.runtime.onConnect.trigger(port);
+    port.onMessage.trigger({ type: "coach:handshake", windowId: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    chrome.action.onClicked.trigger({ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" });
+    await flushWork(core);
+    expect(port.posts.some((message) => message.type === "coach:close-panel")).toBe(false);
+    expect(actionCalls.some(([type]) => type === "open")).toBe(true);
+  });
+
+  it("icon click closes every ready panel port open in the same window", async () => {
+    const { core, chrome, actionCalls } = await loadWorker();
+    const first = panelPort({ id: "test-extension", url: "chrome-extension://test-extension/sidepanel.html" });
+    chrome.runtime.onConnect.trigger(first);
+    first.onMessage.trigger({ type: "coach:handshake", windowId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = panelPort({ id: "test-extension", url: "chrome-extension://test-extension/sidepanel.html" });
+    chrome.runtime.onConnect.trigger(second);
+    second.onMessage.trigger({ type: "coach:handshake", windowId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    chrome.action.onClicked.trigger({ id: 1, windowId: 1, url: "https://leetcode.com/problems/two-sum/" });
+    await flushWork(core);
+    expect(first.posts).toContainEqual({ type: "coach:close-panel" });
+    expect(second.posts).toContainEqual({ type: "coach:close-panel" });
+    expect(actionCalls.some(([type]) => type === "open")).toBe(false);
+  });
+
   it("isRestrictedProtocol returns true for chrome:, about:, data: and false for normal URLs", async () => {
     const { core } = await loadWorker();
     expect(core.isRestrictedProtocol("chrome://extensions")).toBe(true);

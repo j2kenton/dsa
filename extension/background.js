@@ -981,7 +981,14 @@ async function insertTemplate(tab, frameId, text) {
 
 chrome.runtime.onInstalled.addListener(() => { buildMenus(); void reconcileCredentials(); });
 chrome.runtime.onStartup.addListener(() => { buildMenus(); void reconcileCredentials(); });
-chrome.action.onClicked.addListener((tab) => launchCoach(tab));
+chrome.action.onClicked.addListener((tab) => {
+  const openPorts = [...panelPorts.entries()].filter(([, context]) => context.ready && context.windowId === tab.windowId);
+  if (openPorts.length) {
+    for (const [port] of openPorts) { try { port.postMessage({ type: "coach:close-panel" }); } catch {} }
+    return;
+  }
+  launchCoach(tab);
+});
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === COACH_MENU_ID) launchCoach(tab);
   if (typeof info.menuItemId === "string" && info.menuItemId.startsWith("template:") && tab?.id) void insertTemplate(tab, typeof info.frameId === "number" ? info.frameId : 0, TEMPLATES[info.menuItemId.slice(9)]);

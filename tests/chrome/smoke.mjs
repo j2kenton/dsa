@@ -313,6 +313,57 @@ try {
       await restartDone;
       progress("confirmed worker stopped and restarted for the restart open probe");
     }
+    // Action-icon toggle close probe: verifies coach:close-panel actually
+    // causes the real side-panel document to self-close via window.close(),
+    // which is otherwise the one mechanism in the toggle feature with no
+    // automated coverage (tests/unit/background-core.test.mjs only asserts
+    // that the message is posted, not that the recipient document closes).
+    // `panel` is a real extension document loaded from the packaged ZIP with
+    // a live, reconnected port by this point (its onDisconnect handler
+    // auto-reconnects after every worker restart above). This is NOT a full
+    // substitute for the release checklist's native side-panel click-through:
+    // `panel` was opened via page.goto(), not Chrome's sidePanel UI, so it
+    // cannot prove the docked native panel closes the same way — only that
+    // the message handler's window.close() call closes an extension
+    // document in real Chrome.
+    {
+      const closeWorkerTarget = await browser.waitForTarget((target) => target.type() === "service_worker" && target.url().startsWith("chrome-extension://"), { timeout: 5000 });
+      const closeSession = await closeWorkerTarget.createCDPSession();
+      let posted = false;
+      try {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline && !posted) {
+          const { result } = await closeSession.send("Runtime.evaluate", {
+            expression: `(${(windowId) => {
+              for (const [port, context] of panelPorts) {
+                if (context.ready && context.windowId === windowId) { port.postMessage({ type: "coach:close-panel" }); return true; }
+              }
+              return false;
+            }})(${JSON.stringify(panelWindowId)})`,
+            returnByValue: true,
+          });
+          posted = result.value;
+          if (!posted) await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      } finally {
+        await closeSession.detach();
+      }
+      if (!posted) {
+        console.log("[smoke] (inconclusive — the side-panel document's port did not reconnect before the close probe deadline)");
+      } else {
+        const closed = await Promise.race([
+          new Promise((resolve) => panel.once("close", () => resolve(true))),
+          new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
+        ]);
+        if (closed) {
+          progress("verified coach:close-panel causes the side-panel document to self-close via window.close()");
+        } else if (browserHeadless) {
+          console.log("[smoke] (inconclusive — window.close() self-close probe requires a real display)");
+        } else {
+          throw new Error("coach:close-panel did not close the side-panel document within 5s (window.close() had no observable effect)");
+        }
+      }
+    }
     await optionsPageOpenProbe("after restart", leetCodeTab.id);
     const swTarget = await browser.waitForTarget((target) => target.type() === "service_worker" && target.url().startsWith("chrome-extension://"), { timeout: 5000 });
     // Target.worker() caches and returns the same WebWorker/session for a

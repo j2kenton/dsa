@@ -140,6 +140,7 @@ function connect() {
     if (message.type === "coach:error") $("#error").textContent = message.error;
     if (message.type === "coach:mismatch") { if (current) { current = { ...current, mismatch: { currentTabId: message.currentTabId, message: message.message } }; render(); } }
     if (message.type === "coach:template") { $("#template-key").value = message.code; $("#template-form").hidden = false; }
+    if (message.type === "coach:close-panel") { window.close(); }
   });
   port.onDisconnect.addListener(() => {
     clearRetryTimer(); port = null;
