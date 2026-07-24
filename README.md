@@ -4,9 +4,9 @@
 
 [Install Algo Coach from the Chrome Web Store](https://chromewebstore.google.com/detail/dsa-templates/ollnhakcihdpbakabcdgagaciipklehd)
 
-![Algo Coach screenshot](store-assets/screenshot-1.png)
+![Algo Coach screenshot](store-assets/fullsize/screenshot-1.png)
 
-![Algo Coach screenshot](store-assets/screenshot-2.png)
+![Algo Coach screenshot](store-assets/fullsize/screenshot-2.png)
 
 Algo Coach is a deliberately designed DSA learning experience for LeetCode. It combines a library of reusable JavaScript patterns with an AI coach that behaves more like a strong technical interviewer than an answer generator.
 
